@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..llm import _split_provider_model
 from ..parsing import load_repaired_json, safe_json_dumps
 from ..settings import CompIntelSettings
 from .base import BaseCompIntelAgent
@@ -64,7 +65,7 @@ class ReviewerAgent(BaseCompIntelAgent):
                 return None
             completion_fn = create_chat_completion
 
-        provider, model = self._split_provider_model(settings.strategic_llm)
+        provider, model = _split_provider_model(settings.strategic_llm)
         prompt = (
             "You are CompIntel's LLM-as-Judge reviewer. Score the report on three "
             "dimensions from 0 to 10: completeness, accuracy, actionability. "
@@ -197,9 +198,3 @@ class ReviewerAgent(BaseCompIntelAgent):
             return max(0.0, min(10.0, float(value)))
         except (TypeError, ValueError):
             return 0.0
-
-    def _split_provider_model(self, value: str) -> tuple[str, str]:
-        if ":" in value:
-            provider, model = value.split(":", 1)
-            return provider.strip() or "openai", model.strip() or "gpt-4o-mini"
-        return "openai", value.strip() or "gpt-4o-mini"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..llm import _split_provider_model
 from ..parsing import load_repaired_json, safe_json_dumps
 from ..settings import CompIntelSettings
 from .base import BaseCompIntelAgent
@@ -56,7 +57,7 @@ class SWOTSynthesizerAgent(BaseCompIntelAgent):
                 return None
             completion_fn = create_chat_completion
 
-        provider, model = self._split_provider_model(settings.strategic_llm)
+        provider, model = _split_provider_model(settings.strategic_llm)
         compact_profiles = [
             {
                 "name": profile.get("name"),
@@ -205,9 +206,3 @@ class SWOTSynthesizerAgent(BaseCompIntelAgent):
                 elif str(value).strip() and str(value).strip() not in {"search_worker", "scrape_worker", "rag_retriever"}:
                     return str(value)
         return "profile summary"
-
-    def _split_provider_model(self, value: str) -> tuple[str, str]:
-        if ":" in value:
-            provider, model = value.split(":", 1)
-            return provider.strip() or "openai", model.strip() or "gpt-4o-mini"
-        return "openai", value.strip() or "gpt-4o-mini"

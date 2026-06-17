@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..llm import _split_provider_model
 from ..parsing import load_repaired_json, safe_json_dumps
 from ..settings import CompIntelSettings
 from .base import BaseCompIntelAgent
@@ -61,7 +62,7 @@ class ResearchPlannerAgent(BaseCompIntelAgent):
                 return None
             completion_fn = create_chat_completion
 
-        provider, model = self._split_provider_model(settings.fast_llm)
+        provider, model = _split_provider_model(settings.fast_llm)
         prompt = (
             "You are CompIntel's research planner.\n"
             "Create a JSON object keyed by competitor name. Each competitor must include phases "
@@ -88,12 +89,6 @@ class ResearchPlannerAgent(BaseCompIntelAgent):
         if isinstance(parsed, dict):
             return parsed
         return None
-
-    def _split_provider_model(self, value: str) -> tuple[str, str]:
-        if ":" in value:
-            provider, model = value.split(":", 1)
-            return provider.strip() or "openai", model.strip() or "gpt-4o-mini"
-        return "openai", value.strip() or "gpt-4o-mini"
 
     def _template_plan(self, competitors: list[dict[str, Any]]) -> dict[str, Any]:
         plan: dict[str, Any] = {}

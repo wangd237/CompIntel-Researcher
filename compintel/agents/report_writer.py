@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..llm import _split_provider_model
 from ..parsing import load_repaired_json, safe_json_dumps
 from ..settings import CompIntelSettings
 from .base import BaseCompIntelAgent
@@ -76,7 +77,7 @@ class ReportWriterAgent(BaseCompIntelAgent):
                 return None
             completion_fn = create_chat_completion
 
-        provider, model = self._split_provider_model(settings.smart_llm)
+        provider, model = _split_provider_model(settings.smart_llm)
         sources = self._extract_sources(profiles)
         compact_profiles = [
             {
@@ -320,9 +321,3 @@ class ReportWriterAgent(BaseCompIntelAgent):
         if competitors:
             parts.append("Competitors covered: " + ", ".join(competitors))
         return "\n".join(parts) or "SWOT analysis is not available."
-
-    def _split_provider_model(self, value: str) -> tuple[str, str]:
-        if ":" in value:
-            provider, model = value.split(":", 1)
-            return provider.strip() or "openai", model.strip() or "gpt-4o-mini"
-        return "openai", value.strip() or "gpt-4o-mini"

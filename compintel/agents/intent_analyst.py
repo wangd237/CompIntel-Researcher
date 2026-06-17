@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ..llm import _split_provider_model
 from ..parsing import load_repaired_json
 from ..settings import CompIntelSettings
 from ..schemas import CompetitorCandidate, IntentAnalysisResponse
@@ -60,7 +61,7 @@ class IntentAnalystAgent(BaseCompIntelAgent):
         except Exception:
             return None
 
-        provider, model = self._split_provider_model(settings.fast_llm)
+        provider, model = _split_provider_model(settings.fast_llm)
 
         prompt = (
             "You are CompIntel's intent analyst.\n"
@@ -90,14 +91,6 @@ class IntentAnalystAgent(BaseCompIntelAgent):
         if isinstance(parsed, dict):
             return parsed
         return None
-
-    def _split_provider_model(self, value: str) -> tuple[str, str]:
-        if ":" in value:
-            provider, model = value.split(":", 1)
-            provider = provider.strip() or "openai"
-            model = model.strip() or "gpt-4o-mini"
-            return provider, model
-        return "openai", value.strip() or "gpt-4o-mini"
 
     def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         intent = payload.get("intent") or {}
