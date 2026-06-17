@@ -57,6 +57,16 @@ class CompIntelGraph:
     profile_app: Any = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # Lazy SqliteSaver: if checkpoint_path is a string path, replace
+        # the default MemorySaver with a persistent SqliteSaver.
+        if isinstance(self.checkpoint_path, str) and isinstance(self.checkpointer, MemorySaver):
+            try:
+                from langgraph.checkpoint.sqlite import SqliteSaver  # type: ignore[import-untyped]
+
+                self.checkpointer = SqliteSaver.from_conn_string(self.checkpoint_path)
+            except ImportError:
+                pass  # SQLite support not installed; keep MemorySaver
+
         if not self.nodes:
             self.nodes = [
                 GraphNode("intent_analyst", "Parse query into competitors and research questions"),
@@ -143,9 +153,11 @@ class CompIntelGraph:
         graph.add_node("scrape_worker", self._profile_scrape_node)
         graph.add_node("rag_retriever", self._profile_rag_node)
         graph.add_node("aggregator", self._profile_aggregator_node)
-        graph.add_edge(START, "search_worker")
-        graph.add_edge(START, "scrape_worker")
-        graph.add_edge(START, "rag_retriever")
+        graph.add_node("fan_out", lambda s: {})
+        graph.add_edge(START, "fan_out")
+        graph.add_edge("fan_out", "search_worker")
+        graph.add_edge("fan_out", "scrape_worker")
+        graph.add_edge("fan_out", "rag_retriever")
         graph.add_edge("search_worker", "aggregator")
         graph.add_edge("scrape_worker", "aggregator")
         graph.add_edge("rag_retriever", "aggregator")
@@ -328,3 +340,4 @@ class CompIntelGraph:
     def _config(self, query: str) -> dict[str, Any]:
         thread_id = f"compintel:{abs(hash(query))}"
         return {"configurable": {"thread_id": thread_id}}
+
