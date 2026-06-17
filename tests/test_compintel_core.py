@@ -11,6 +11,7 @@ from compintel.export import MarkdownFormatter
 from compintel.progress import ProgressSummaryFormatter
 from compintel.rag import QdrantStore, RagDocument, SeedReportLoader
 from compintel.settings import CompIntelSettings
+from compintel.agents.rag_retriever import RAGRetriever
 from compintel.agents.scrape_worker import ScrapeWorker
 from compintel.agents.search_worker import SearchWorker
 from compintel.tracker import ExecutionTracker
@@ -413,3 +414,44 @@ def test_seed_report_loader_loads_default_saas_reports() -> None:
 
     assert count == 12
     assert len(results) == 3
+
+
+def test_rag_retriever_reads_from_qdrant_store() -> None:
+    store = QdrantStore(collection_name="test_rag_retriever")
+    store.ingest(
+        [
+            RagDocument(
+                text="Notion is strong in docs, knowledge management, and collaboration.",
+                source="seed:notion",
+                metadata={"competitor": "Notion"},
+            )
+        ]
+    )
+    retriever = RAGRetriever(store=store, top_k=1)
+
+    result = asyncio.run(retriever({"competitor": {"name": "Notion"}}))
+
+    assert len(result["rag_context"]) == 1
+    assert result["rag_context"][0]["source"] == "seed:notion"
+
+
+def test_rag_retriever_returns_empty_without_results() -> None:
+    store = QdrantStore(collection_name="test_rag_retriever_empty")
+    retriever = RAGRetriever(store=store, top_k=3)
+
+    result = asyncio.run(retriever({"competitor": {"name": "UnknownCo"}}))
+
+    assert result["rag_context"] == []
+
+
+def test_rag_retriever_returns_empty_on_store_error() -> None:
+    class BrokenStore:
+        def similarity_search(self, query: str, top_k: int = 5) -> list[dict]:
+            raise RuntimeError("qdrant unavailable")
+
+    retriever = RAGRetriever(store=BrokenStore())  # type: ignore[arg-type]
+
+    result = asyncio.run(retriever({"competitor": {"name": "Notion"}}))
+
+    assert result["rag_context"] == []
+    assert result["execution_log"][0]["event"] == "completed_with_error"
