@@ -56,7 +56,7 @@ class ResearchPlannerAgent(BaseCompIntelAgent):
         completion_fn = self.completion_fn
         if completion_fn is None:
             try:
-                from gpt_researcher.utils.llm import create_chat_completion
+                from ..llm import create_chat_completion
             except Exception:
                 return None
             completion_fn = create_chat_completion

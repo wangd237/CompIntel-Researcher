@@ -23,6 +23,13 @@ from compintel.agents.swot_synthesizer import SWOTSynthesizerAgent
 from compintel.tracker import ExecutionTracker
 
 
+def _disable_env_services(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_API_KEY", "replace-with-your-deepseek-api-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "replace-with-your-openai-api-key")
+    monkeypatch.setenv("SERPAPI_API_KEY", "tvly-your_tavily_key_here")
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-your_tavily_key_here")
+
+
 def test_tracker_snapshot_and_audit() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         audit_path = Path(temp_dir) / "audit.jsonl"
@@ -62,7 +69,65 @@ def test_markdown_formatter_writes_report() -> None:
         assert "- Coda" in text
 
 
-def test_execution_emits_ordered_events() -> None:
+def test_markdown_formatter_expands_swot_sources_and_data_gaps() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        formatter = MarkdownFormatter(output_dir=Path(temp_dir))
+        payload = {
+            "result": {
+                "intent": {"target": "Notion", "market_segment": "collaboration software"},
+                "competitors": [{"name": "Coda"}],
+                "profiles": [
+                    {
+                        "name": "Coda",
+                        "summary": "Docs plus tables",
+                        "search_results": [
+                            {"url": "https://coda.io"},
+                            {"url": "https://coda.io"},
+                        ],
+                    }
+                ],
+                "report": {
+                    "report": {
+                        "executive_summary": "Notion competes with Coda.",
+                        "sections": [
+                            {
+                                "title": "竞争格局",
+                                "content": "Coda targets flexible documents. [Source: https://coda.io]",
+                                "key_insights": ["Flexible docs matter"],
+                            }
+                        ],
+                        "swot_analysis": {
+                            "summary": "Evidence-backed SWOT",
+                            "competitors": [
+                                {
+                                    "name": "Coda",
+                                    "strengths": [{"text": "Flexible docs", "evidence": "https://coda.io"}],
+                                    "weaknesses": [{"text": "Smaller ecosystem", "evidence": "RAG seed"}],
+                                    "opportunities": [{"text": "AI docs", "evidence": "Market analysis"}],
+                                    "threats": [{"text": "Suite bundling", "evidence": "Search result"}],
+                                }
+                            ],
+                        },
+                        "sources": ["https://coda.io", "https://coda.io"],
+                        "data_gaps": ["缺少 ARR 数据"],
+                    },
+                    "review_feedback": {"approved": True, "score": 8},
+                },
+            }
+        }
+
+        text = formatter.render(payload)
+
+        assert "| Name | Summary | Sources |" in text
+        assert "#### Strengths" in text
+        assert "  - Evidence: https://coda.io" in text
+        assert "- ⚠ Data Gap: 缺少 ARR 数据" in text
+        assert text.count("https://coda.io](https://coda.io)") == 1
+
+
+def test_execution_emits_ordered_events(monkeypatch) -> None:
+    _disable_env_services(monkeypatch)
+
     async def _run() -> dict:
         with tempfile.TemporaryDirectory() as temp_dir:
             os.environ["COMPINTEL_AUDIT_PATH"] = str(Path(temp_dir) / "audit.jsonl")
@@ -196,6 +261,7 @@ def test_settings_supports_generic_provider_fields(monkeypatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "kimi")
     monkeypatch.setenv("LLM_API_KEY", "kimi-real-key")
     monkeypatch.setenv("LLM_BASE_URL", "https://api.moonshot.cn/v1")
+    monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "12")
     monkeypatch.setenv("FAST_LLM", "moonshot-v1-8k")
     monkeypatch.setenv("SEARCH_PROVIDER", "tavily")
     monkeypatch.setenv("SERPAPI_API_KEY", "tvly-real-key")
@@ -206,6 +272,7 @@ def test_settings_supports_generic_provider_fields(monkeypatch) -> None:
     assert settings.fast_llm == "openai:moonshot-v1-8k"
     assert settings.openai_api_key == "kimi-real-key"
     assert settings.openai_base_url == "https://api.moonshot.cn/v1"
+    assert settings.llm_timeout_seconds == 12
     assert settings.search_provider == "tavily"
     assert settings.search_api_key == "tvly-real-key"
 
@@ -494,8 +561,7 @@ def test_research_planner_uses_llm_completion_when_available(monkeypatch) -> Non
 
 
 def test_research_planner_falls_back_without_llm_key(monkeypatch) -> None:
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _disable_env_services(monkeypatch)
     planner = ResearchPlannerAgent()
 
     result = asyncio.run(planner({"competitors": [{"name": "Slack"}]}))
@@ -505,10 +571,7 @@ def test_research_planner_falls_back_without_llm_key(monkeypatch) -> None:
 
 
 def test_pipeline_degrades_without_api_keys(monkeypatch) -> None:
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
-    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    _disable_env_services(monkeypatch)
 
     response = asyncio.run(
         CompIntelGraph().run_competitor_pipeline("分析 Notion 在协作工具市场的竞品")
@@ -554,8 +617,7 @@ def test_market_analyst_uses_llm_completion_when_available(monkeypatch) -> None:
 
 
 def test_market_analyst_falls_back_without_llm_key(monkeypatch) -> None:
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _disable_env_services(monkeypatch)
     analyst = MarketAnalystAgent()
 
     result = asyncio.run(
@@ -569,6 +631,26 @@ def test_market_analyst_falls_back_without_llm_key(monkeypatch) -> None:
 
     assert result["market_analysis"]["growth_trends"] == ["placeholder growth trend"]
     assert "template" in result["execution_log"][0]["detail"]
+
+
+def test_market_analyst_derives_non_placeholder_when_llm_configured(monkeypatch) -> None:
+    async def failing_completion(**kwargs) -> str:
+        raise RuntimeError("network unavailable")
+
+    monkeypatch.setenv("LLM_API_KEY", "real-key")
+    analyst = MarketAnalystAgent(completion_fn=failing_completion)
+
+    result = asyncio.run(
+        analyst(
+            {
+                "market_segment": "collaboration software",
+                "profiles": [{"name": "Notion", "summary": "Workspace platform"}],
+            }
+        )
+    )
+
+    assert "placeholder" not in str(result["market_analysis"]).lower()
+    assert "derived" in result["execution_log"][0]["detail"]
 
 
 def test_swot_synthesizer_uses_llm_completion_when_available(monkeypatch) -> None:
@@ -618,8 +700,7 @@ def test_swot_synthesizer_uses_llm_completion_when_available(monkeypatch) -> Non
 
 
 def test_swot_synthesizer_falls_back_without_llm_key(monkeypatch) -> None:
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _disable_env_services(monkeypatch)
     synthesizer = SWOTSynthesizerAgent()
 
     result = asyncio.run(
@@ -637,6 +718,33 @@ def test_swot_synthesizer_falls_back_without_llm_key(monkeypatch) -> None:
     assert result["swot_analysis"]["summary"] == "placeholder SWOT analysis"
     assert result["swot_analysis"]["competitors"][0]["name"] == "Coda"
     assert "template" in result["execution_log"][0]["detail"]
+
+
+def test_swot_synthesizer_derives_non_placeholder_when_llm_configured(monkeypatch) -> None:
+    async def failing_completion(**kwargs) -> str:
+        raise RuntimeError("network unavailable")
+
+    monkeypatch.setenv("LLM_API_KEY", "real-key")
+    synthesizer = SWOTSynthesizerAgent(completion_fn=failing_completion)
+
+    result = asyncio.run(
+        synthesizer(
+            {
+                "profiles": [
+                    {
+                        "name": "Coda",
+                        "summary": "Docs plus tables",
+                        "search_results": [{"url": "https://coda.io"}],
+                    }
+                ],
+                "market_analysis": {"market_overview": "AI workspace market"},
+            }
+        )
+    )
+
+    assert "placeholder" not in str(result["swot_analysis"]).lower()
+    assert result["swot_analysis"]["competitors"][0]["strengths"][0]["evidence"] == "https://coda.io"
+    assert "derived" in result["execution_log"][0]["detail"]
 
 
 def test_report_writer_uses_llm_completion_when_available(monkeypatch) -> None:
@@ -688,8 +796,7 @@ def test_report_writer_uses_llm_completion_when_available(monkeypatch) -> None:
 
 
 def test_report_writer_falls_back_without_llm_key(monkeypatch) -> None:
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _disable_env_services(monkeypatch)
     writer = ReportWriterAgent()
 
     result = asyncio.run(
@@ -716,6 +823,36 @@ def test_report_writer_falls_back_without_llm_key(monkeypatch) -> None:
     assert len(report["sections"]) == 3
     assert "AI-assisted knowledge work" in report["sections"][1]["key_insights"]
     assert "template" in result["execution_log"][0]["detail"]
+
+
+def test_report_writer_derives_non_placeholder_when_llm_configured(monkeypatch) -> None:
+    async def failing_completion(**kwargs) -> str:
+        raise RuntimeError("network unavailable")
+
+    monkeypatch.setenv("LLM_API_KEY", "real-key")
+    writer = ReportWriterAgent(completion_fn=failing_completion)
+
+    result = asyncio.run(
+        writer(
+            {
+                "query": "分析 Notion",
+                "intent": {"target": "Notion"},
+                "profiles": [
+                    {
+                        "name": "Coda",
+                        "summary": "Docs plus tables",
+                        "search_results": [{"url": "https://coda.io"}],
+                    }
+                ],
+                "market_analysis": {"growth_trends": ["AI-assisted knowledge work"]},
+                "swot_analysis": {"summary": "Evidence-backed SWOT"},
+            }
+        )
+    )
+
+    assert "placeholder" not in str(result["report"]).lower()
+    assert result["report"]["conclusion"]
+    assert "derived" in result["execution_log"][0]["detail"]
 
 
 def test_reviewer_uses_llm_weighted_score_when_available(monkeypatch) -> None:
@@ -762,8 +899,7 @@ def test_reviewer_uses_llm_weighted_score_when_available(monkeypatch) -> None:
 
 
 def test_reviewer_fallback_scores_structural_quality(monkeypatch) -> None:
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _disable_env_services(monkeypatch)
     reviewer = ReviewerAgent()
 
     result = asyncio.run(
@@ -787,7 +923,8 @@ def test_reviewer_fallback_scores_structural_quality(monkeypatch) -> None:
     assert "rules" in result["execution_log"][0]["detail"]
 
 
-def test_langgraph_pipeline_fans_out_competitor_profiles() -> None:
+def test_langgraph_pipeline_fans_out_competitor_profiles(monkeypatch) -> None:
+    _disable_env_services(monkeypatch)
     graph = CompIntelGraph()
 
     response = asyncio.run(
@@ -822,7 +959,8 @@ def test_langgraph_pipeline_exports_mermaid_graph() -> None:
     assert "reviewer" in mermaid
 
 
-def test_langgraph_checkpointer_records_pipeline_state() -> None:
+def test_langgraph_checkpointer_records_pipeline_state(monkeypatch) -> None:
+    _disable_env_services(monkeypatch)
     query = "分析 Notion 在协作工具市场的竞品"
     graph = CompIntelGraph()
 

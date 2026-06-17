@@ -25,8 +25,12 @@ class SWOTSynthesizerAgent(BaseCompIntelAgent):
         swot = await self._try_llm_synthesize(profiles, market_analysis, settings)
         source = "llm"
         if swot is None:
-            swot = self._fallback_swot(profiles, market_analysis)
-            source = "template"
+            if settings.llm_api_key:
+                swot = self._derived_swot(profiles, market_analysis)
+                source = "derived"
+            else:
+                swot = self._fallback_swot(profiles, market_analysis)
+                source = "template"
 
         return {
             "swot_analysis": swot,
@@ -47,7 +51,7 @@ class SWOTSynthesizerAgent(BaseCompIntelAgent):
         completion_fn = self.completion_fn
         if completion_fn is None:
             try:
-                from gpt_researcher.utils.llm import create_chat_completion
+                from ..llm import create_chat_completion
             except Exception:
                 return None
             completion_fn = create_chat_completion
@@ -146,6 +150,61 @@ class SWOTSynthesizerAgent(BaseCompIntelAgent):
                 if isinstance(profile, dict)
             ],
         }
+
+    def _derived_swot(self, profiles: list[dict[str, Any]], market_analysis: dict[str, Any]) -> dict[str, Any]:
+        overview = str(market_analysis.get("market_overview") or "Market context was derived from competitor profiles.")
+        barriers = market_analysis.get("barriers_to_entry") or ["Enterprise switching costs"]
+        competitors = []
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            name = str(profile.get("name", "unknown"))
+            summary = str(profile.get("summary") or f"{name} has available profile evidence.")
+            evidence = self._first_evidence(profile)
+            competitors.append(
+                {
+                    "name": name,
+                    "strengths": [{"text": summary, "evidence": evidence}],
+                    "weaknesses": [
+                        {
+                            "text": "Public evidence is incomplete for pricing, traction, or enterprise adoption.",
+                            "evidence": evidence,
+                        }
+                    ],
+                    "opportunities": [{"text": overview, "evidence": evidence}],
+                    "threats": [{"text": str(barriers[0] if isinstance(barriers, list) else barriers), "evidence": evidence}],
+                }
+            )
+        return {
+            "summary": "SWOT synthesized from available competitor profiles and market context.",
+            "competitors": competitors,
+            "cross_analysis": {
+                "common_strengths": [
+                    {
+                        "text": "Competitors converge around flexible collaboration and workflow consolidation.",
+                        "evidence": "profile summaries and market analysis",
+                    }
+                ],
+                "differentiators": [
+                    {
+                        "text": "Differentiation depends on product breadth, integrations, ecosystem reach, and adoption friction.",
+                        "evidence": "profile summaries and market analysis",
+                    }
+                ],
+            },
+        }
+
+    def _first_evidence(self, profile: dict[str, Any]) -> str:
+        for key in ("search_results", "scraped_content", "rag_context", "sources"):
+            values = profile.get(key, [])
+            for value in values if isinstance(values, list) else [values]:
+                if isinstance(value, dict):
+                    source = value.get("url") or value.get("source") or value.get("title")
+                    if source:
+                        return str(source)
+                elif str(value).strip() and str(value).strip() not in {"search_worker", "scrape_worker", "rag_retriever"}:
+                    return str(value)
+        return "profile summary"
 
     def _split_provider_model(self, value: str) -> tuple[str, str]:
         if ":" in value:

@@ -23,6 +23,7 @@ class CompIntelSettings:
     strategic_llm: str = "openai:deepseek-reasoner"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
+    llm_timeout_seconds: float = 30.0
     search_provider: str = "tavily"
     search_api_key: str | None = None
     report_store_path: str = "outputs/compintel_audit.jsonl"
@@ -51,6 +52,7 @@ class CompIntelSettings:
                 _setting(values, "LLM_API_KEY", "")
                 or _setting(values, "OPENAI_API_KEY", "")
             ),
+            llm_timeout_seconds=_float_setting(values, "LLM_TIMEOUT_SECONDS", 30.0),
             search_provider=search_provider,
             search_api_key=_clean_secret(
                 _setting(values, "SERPAPI_API_KEY", "")
@@ -79,6 +81,13 @@ def _clean_secret(value: str | None) -> str | None:
     if not lowered or "replace-with" in lowered or "your_" in lowered or "your-" in lowered:
         return None
     return value.strip()
+
+
+def _float_setting(dotenv: dict[str, str], key: str, default: float) -> float:
+    try:
+        return float(_setting(dotenv, key, str(default)))
+    except ValueError:
+        return default
 
 
 def _read_dotenv(path: Path) -> dict[str, str]:

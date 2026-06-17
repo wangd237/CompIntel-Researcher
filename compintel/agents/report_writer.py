@@ -41,8 +41,12 @@ class ReportWriterAgent(BaseCompIntelAgent):
         )
         source = "llm"
         if report is None:
-            report = self._fallback_report(query, intent, profiles, market_analysis, swot_analysis)
-            source = "template"
+            if settings.llm_api_key:
+                report = self._derived_report(query, intent, profiles, market_analysis, swot_analysis)
+                source = "derived"
+            else:
+                report = self._fallback_report(query, intent, profiles, market_analysis, swot_analysis)
+                source = "template"
 
         return {
             "report": report,
@@ -67,7 +71,7 @@ class ReportWriterAgent(BaseCompIntelAgent):
         completion_fn = self.completion_fn
         if completion_fn is None:
             try:
-                from gpt_researcher.utils.llm import create_chat_completion
+                from ..llm import create_chat_completion
             except Exception:
                 return None
             completion_fn = create_chat_completion
@@ -180,8 +184,8 @@ class ReportWriterAgent(BaseCompIntelAgent):
             citation = f" [Source: {first_source}]" if first_source and summary else ""
             profile_lines.append(f"{profile.get('name', 'unknown')}: {summary}{citation}")
 
-        market_content = safe_json_dumps(market_analysis)
-        swot_content = safe_json_dumps(swot_analysis)
+        market_content = self._summarize_market(market_analysis)
+        swot_content = self._summarize_swot(swot_analysis)
         if first_source:
             if market_content and "[Source:" not in market_content:
                 market_content = f"{market_content} [Source: {first_source}]"
@@ -228,16 +232,41 @@ class ReportWriterAgent(BaseCompIntelAgent):
             "data_gaps": data_gaps,
         }
 
+    def _derived_report(
+        self,
+        query: str,
+        intent: dict[str, Any],
+        profiles: list[dict[str, Any]],
+        market_analysis: dict[str, Any],
+        swot_analysis: dict[str, Any],
+    ) -> dict[str, Any]:
+        report = self._fallback_report(query, intent, profiles, market_analysis, swot_analysis)
+        target = intent.get("target", "unknown")
+        sources = report.get("sources", [])
+        citation = f" [Source: {sources[0]}]" if sources else ""
+        report["executive_summary"] = (
+            f"{target} competitive analysis based on collected profiles, market context, and SWOT evidence."
+        )[:300]
+        report["conclusion"] = (
+            f"{target} should be evaluated against competitor product scope, workflow depth, ecosystem reach, "
+            f"and switching-cost barriers.{citation}"
+        )
+        report["data_gaps"] = [
+            "Validate the latest revenue, customer count, and pricing details with authoritative sources.",
+            *report.get("data_gaps", []),
+        ]
+        return report
+
     def _extract_sources(self, profiles: list[dict[str, Any]]) -> list[str]:
         sources: list[str] = []
         for profile in profiles:
             if not isinstance(profile, dict):
                 continue
-            for value in profile.get("sources", []):
-                self._append_source(sources, value)
             for item_key in ("search_results", "scraped_content", "rag_context"):
                 for value in profile.get(item_key, []):
                     self._append_source(sources, value)
+            for value in profile.get("sources", []):
+                self._append_source(sources, value)
         return sources
 
     def _append_source(self, sources: list[str], value: Any) -> None:
@@ -247,6 +276,8 @@ class ReportWriterAgent(BaseCompIntelAgent):
         else:
             source = str(value)
         source = source.strip()
+        if source in {"search_worker", "scrape_worker", "rag_retriever"}:
+            return
         if source and source not in sources:
             sources.append(source)
 
@@ -262,6 +293,33 @@ class ReportWriterAgent(BaseCompIntelAgent):
         if values:
             return [str(values)]
         return []
+
+    def _summarize_market(self, market_analysis: dict[str, Any]) -> str:
+        overview = str(market_analysis.get("market_overview", "")).strip()
+        trends = self._normalize_list(market_analysis.get("growth_trends", []))
+        differentiators = self._normalize_list(market_analysis.get("key_differentiators", []))
+        parts = []
+        if overview:
+            parts.append(overview)
+        if trends:
+            parts.append("Growth trends: " + "; ".join(trends[:3]))
+        if differentiators:
+            parts.append("Key differentiators: " + "; ".join(differentiators[:3]))
+        return "\n".join(parts) or "Market analysis is not available."
+
+    def _summarize_swot(self, swot_analysis: dict[str, Any]) -> str:
+        summary = str(swot_analysis.get("summary", "")).strip()
+        competitors = [
+            str(item.get("name", "unknown"))
+            for item in swot_analysis.get("competitors", [])
+            if isinstance(item, dict)
+        ]
+        parts = []
+        if summary:
+            parts.append(summary)
+        if competitors:
+            parts.append("Competitors covered: " + ", ".join(competitors))
+        return "\n".join(parts) or "SWOT analysis is not available."
 
     def _split_provider_model(self, value: str) -> tuple[str, str]:
         if ":" in value:

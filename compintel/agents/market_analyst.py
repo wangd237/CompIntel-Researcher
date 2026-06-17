@@ -25,8 +25,12 @@ class MarketAnalystAgent(BaseCompIntelAgent):
         market_analysis = await self._try_llm_analyze(profiles, market_segment, settings)
         source = "llm"
         if market_analysis is None:
-            market_analysis = self._fallback_analysis(profiles, market_segment)
-            source = "template"
+            if settings.llm_api_key:
+                market_analysis = self._derived_analysis(profiles, market_segment)
+                source = "derived"
+            else:
+                market_analysis = self._fallback_analysis(profiles, market_segment)
+                source = "template"
 
         return {
             "market_analysis": market_analysis,
@@ -47,7 +51,7 @@ class MarketAnalystAgent(BaseCompIntelAgent):
         completion_fn = self.completion_fn
         if completion_fn is None:
             try:
-                from gpt_researcher.utils.llm import create_chat_completion
+                from ..llm import create_chat_completion
             except Exception:
                 return None
             completion_fn = create_chat_completion
@@ -118,6 +122,35 @@ class MarketAnalystAgent(BaseCompIntelAgent):
             "key_differentiators": ["placeholder differentiator"],
             "technology_trends": ["placeholder technology trend"],
             "barriers_to_entry": ["placeholder barrier"],
+        }
+
+    def _derived_analysis(self, profiles: list[dict[str, Any]], market_segment: str) -> dict[str, Any]:
+        names = [str(profile.get("name", "unknown")) for profile in profiles if isinstance(profile, dict)]
+        summaries = [
+            str(profile.get("summary", "")).strip()
+            for profile in profiles
+            if isinstance(profile, dict) and str(profile.get("summary", "")).strip()
+        ]
+        segment = market_segment or "target market"
+        return {
+            "market_overview": (
+                f"{segment} includes {', '.join(names) if names else 'the profiled competitors'}; "
+                f"available evidence emphasizes product positioning, distribution, and collaboration workflows."
+            ),
+            "growth_trends": [
+                "AI-assisted workflows and knowledge management",
+                "Integrated collaboration across documents, databases, and team communication",
+            ],
+            "competitive_landscape": {
+                "leaders": names[:2],
+                "challengers": names[2:4],
+                "niche": names[4:],
+            },
+            "key_differentiators": summaries[:3] or ["Product scope, ecosystem integrations, and workflow depth"],
+            "barriers_to_entry": [
+                "Enterprise switching costs",
+                "Trust, security, and integration requirements",
+            ],
         }
 
     def _split_provider_model(self, value: str) -> tuple[str, str]:

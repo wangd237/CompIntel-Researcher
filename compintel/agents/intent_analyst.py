@@ -56,7 +56,7 @@ class IntentAnalystAgent(BaseCompIntelAgent):
             return None
 
         try:
-            from gpt_researcher.utils.llm import create_chat_completion
+            from ..llm import create_chat_completion
         except Exception:
             return None
 
@@ -76,13 +76,16 @@ class IntentAnalystAgent(BaseCompIntelAgent):
             '"notes": [string]'
             "}"
         )
-        raw = await create_chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            model=model,
-            llm_provider=provider,
-            max_tokens=1000,
-            temperature=0.2,
-        )
+        try:
+            raw = await create_chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                model=model,
+                llm_provider=provider,
+                max_tokens=1000,
+                temperature=0.2,
+            )
+        except Exception:
+            return None
         parsed = load_repaired_json(raw)
         if isinstance(parsed, dict):
             return parsed
@@ -101,16 +104,26 @@ class IntentAnalystAgent(BaseCompIntelAgent):
         competitors = payload.get("competitors") or intent.get("competitors") or []
         questions = payload.get("research_questions") or intent.get("research_questions") or []
         notes = payload.get("notes") or intent.get("notes") or []
-        return {
-            "intent": intent,
-            "target": payload.get("target") or intent.get("target") or "unknown",
-            "market_segment": payload.get("market_segment") or intent.get("market_segment") or "unknown",
+        target = payload.get("target") or intent.get("target") or "unknown"
+        market_segment = payload.get("market_segment") or intent.get("market_segment") or "unknown"
+        normalized_intent = {
+            **intent,
+            "target": target,
+            "market_segment": market_segment,
             "competitors": [
                 competitor.model_dump() if isinstance(competitor, CompetitorCandidate) else competitor
                 for competitor in competitors
             ],
             "research_questions": [str(item).strip() for item in questions if str(item).strip()],
             "notes": [str(item).strip() for item in notes if str(item).strip()],
+        }
+        return {
+            "intent": normalized_intent,
+            "target": target,
+            "market_segment": market_segment,
+            "competitors": normalized_intent["competitors"],
+            "research_questions": normalized_intent["research_questions"],
+            "notes": normalized_intent["notes"],
         }
 
     def _extract_target(self, query: str) -> str:
