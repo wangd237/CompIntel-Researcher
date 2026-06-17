@@ -76,7 +76,7 @@
 ### 环境要求
 
 - Python 3.11+
-- （可选）OpenAI 兼容 API Key —— 不配置也能跑，使用启发式 fallback
+- （可选）LLM API Key 与搜索 API Key —— 不配置也能跑，系统会使用启发式 fallback；真实搜索需要配置 `.env`
 
 ### 安装
 
@@ -117,7 +117,7 @@ WS   /ws/compintel             → 实时事件流推送
 
 ```bash
 python -m pytest tests/test_compintel_core.py -q
-# 7 passed ✓
+# 9 passed ✓
 ```
 
 ---
@@ -169,7 +169,7 @@ tests/
 IntentAnalyst 是系统的入口，我们做了三层降级保障：
 
 ```
-LLM 调用（OpenAI/DeepSeek）
+LLM 调用（DeepSeek/Kimi/GLM/OpenAI-compatible）
   │
   ├── 成功 → 解析 JSON → 返回结构化结果
   │
@@ -195,26 +195,41 @@ LLM 调用（OpenAI/DeepSeek）
 
 ## 配置
 
-通过环境变量配置：
+项目支持用 `.env` 做本地配置。先复制模板：
+
+```bash
+cp .env.example .env
+```
+
+然后按需替换真实 key。`.env` 已加入 `.gitignore`，不会提交到 GitHub。
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `FAST_LLM` | `openai:gpt-4o-mini` | 快速 Agent 使用的模型 |
-| `SMART_LLM` | `openai:gpt-4o` | 智能 Agent 使用的模型 |
-| `STRATEGIC_LLM` | `openai:gpt-4o` | 战略 Agent 使用的模型 |
-| `OPENAI_BASE_URL` | — | 兼容 OpenAI API 的端点（DeepSeek 等） |
-| `OPENAI_API_KEY` | — | API Key（不设则使用启发式 fallback） |
+| `LLM_PROVIDER` | `deepseek` | LLM 服务商。当前支持 `deepseek`、`kimi`、`glm`、`openai-compatible` |
+| `LLM_API_KEY` | — | 统一 LLM API Key 字段 |
+| `LLM_BASE_URL` | `https://api.deepseek.com/v1` | OpenAI-compatible 服务地址 |
+| `FAST_LLM` | `deepseek-chat` | 快速 Agent 使用的模型 |
+| `SMART_LLM` | `deepseek-chat` | 智能 Agent 使用的模型 |
+| `STRATEGIC_LLM` | `deepseek-reasoner` | 战略/推理 Agent 使用的模型 |
+| `SEARCH_PROVIDER` | `tavily` | 搜索服务商。当前支持 `tavily`、`serpapi` |
+| `SERPAPI_API_KEY` | — | 统一搜索 API Key 字段。使用 Tavily 时也填这里 |
 | `COMPINTEL_AUDIT_PATH` | `outputs/compintel_audit.jsonl` | 审计日志路径 |
 
-**用 DeepSeek：**
+**DeepSeek + Tavily 默认配置：**
 
 ```bash
-export FAST_LLM="openai:deepseek-chat"
-export SMART_LLM="openai:deepseek-chat"
-export STRATEGIC_LLM="openai:deepseek-chat"
-export OPENAI_BASE_URL="https://api.deepseek.com/v1"
-export OPENAI_API_KEY="sk-your-key"
+LLM_PROVIDER=deepseek
+LLM_API_KEY=replace-with-your-deepseek-api-key
+LLM_BASE_URL=https://api.deepseek.com/v1
+FAST_LLM=deepseek-chat
+SMART_LLM=deepseek-chat
+STRATEGIC_LLM=deepseek-reasoner
+
+SEARCH_PROVIDER=tavily
+SERPAPI_API_KEY=tvly-your_tavily_key_here
 ```
+
+Kimi、GLM、SerpApi 的占位配置已写在 `.env.example`，需要时取消注释即可。
 
 ---
 

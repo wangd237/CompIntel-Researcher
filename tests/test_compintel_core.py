@@ -9,6 +9,7 @@ from compintel.execution import CompIntelExecution
 from compintel.bundle import BundleWriter, generate_delivery_bundle
 from compintel.export import MarkdownFormatter
 from compintel.progress import ProgressSummaryFormatter
+from compintel.settings import CompIntelSettings
 from compintel.tracker import ExecutionTracker
 
 
@@ -179,3 +180,31 @@ def test_generate_delivery_bundle_returns_paths() -> None:
         assert Path(paths["progress_path"]).exists()
         assert Path(paths["snapshot_path"]).exists()
         assert Path(paths["manifest_path"]).exists()
+
+
+def test_settings_supports_generic_provider_fields(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("LLM_API_KEY", "kimi-real-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.moonshot.cn/v1")
+    monkeypatch.setenv("FAST_LLM", "moonshot-v1-8k")
+    monkeypatch.setenv("SEARCH_PROVIDER", "tavily")
+    monkeypatch.setenv("SERPAPI_API_KEY", "tvly-real-key")
+
+    settings = CompIntelSettings.from_env()
+
+    assert settings.llm_provider == "kimi"
+    assert settings.fast_llm == "openai:moonshot-v1-8k"
+    assert settings.openai_api_key == "kimi-real-key"
+    assert settings.openai_base_url == "https://api.moonshot.cn/v1"
+    assert settings.search_provider == "tavily"
+    assert settings.search_api_key == "tvly-real-key"
+
+
+def test_settings_ignores_placeholder_secrets(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_API_KEY", "replace-with-your-deepseek-api-key")
+    monkeypatch.setenv("SERPAPI_API_KEY", "tvly-your_tavily_key_here")
+
+    settings = CompIntelSettings.from_env()
+
+    assert settings.llm_api_key is None
+    assert settings.search_api_key is None
