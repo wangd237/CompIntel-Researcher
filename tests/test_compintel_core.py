@@ -10,6 +10,7 @@ from compintel.bundle import BundleWriter, generate_delivery_bundle
 from compintel.export import MarkdownFormatter
 from compintel.progress import ProgressSummaryFormatter
 from compintel.settings import CompIntelSettings
+from compintel.agents.scrape_worker import ScrapeWorker
 from compintel.agents.search_worker import SearchWorker
 from compintel.tracker import ExecutionTracker
 
@@ -291,3 +292,69 @@ def test_search_worker_returns_error_without_api_key() -> None:
 
     assert result["search_results"][0]["error"] is True
     assert "not configured" in result["search_results"][0]["message"]
+
+
+def test_scrape_worker_builds_targets_and_truncates_content() -> None:
+    class FakeScraper:
+        def __init__(self) -> None:
+            self.urls: list[str] = []
+
+        def scrape(self, url: str, user_agent: str) -> dict:
+            self.urls.append(url)
+            return {"url": url, "title": "Example", "content": "x" * 25}
+
+    scraper = FakeScraper()
+    worker = ScrapeWorker(
+        scraper=scraper,
+        max_chars=10,
+        min_delay=0,
+        max_delay=0,
+    )
+
+    result = asyncio.run(
+        worker({"competitor": {"name": "Notion", "website": "notion.so"}})
+    )
+
+    assert scraper.urls[:3] == [
+        "https://notion.so",
+        "https://notion.so/pricing",
+        "https://notion.so/about",
+    ]
+    assert len(result["scraped_content"]) == 5
+    assert result["scraped_content"][0]["content"] == "x" * 10
+    assert result["scraped_content"][0]["truncated"] is True
+
+
+def test_scrape_worker_records_url_errors_without_stopping() -> None:
+    class PartiallyFailingScraper:
+        def scrape(self, url: str, user_agent: str) -> dict:
+            if "pricing" in url:
+                raise RuntimeError("blocked")
+            return {"url": url, "title": "OK", "content": "content"}
+
+    worker = ScrapeWorker(
+        scraper=PartiallyFailingScraper(),
+        min_delay=0,
+        max_delay=0,
+    )
+
+    result = asyncio.run(
+        worker({"competitor": {"name": "Slack", "website": "https://slack.com"}})
+    )
+
+    errors = [item for item in result["scraped_content"] if item.get("error")]
+    successes = [item for item in result["scraped_content"] if not item.get("error")]
+    assert len(errors) == 1
+    assert "blocked" in errors[0]["message"]
+    assert successes
+
+
+def test_scrape_worker_uses_review_sites_without_website() -> None:
+    worker = ScrapeWorker(min_delay=0, max_delay=0)
+
+    urls = worker._build_target_urls("Microsoft Teams", None)
+
+    assert urls == [
+        "https://www.g2.com/search?query=Microsoft+Teams",
+        "https://www.capterra.com/search/?query=Microsoft+Teams",
+    ]
