@@ -13,6 +13,7 @@ from compintel.progress import ProgressSummaryFormatter
 from compintel.rag import QdrantStore, RagDocument, SeedReportLoader
 from compintel.settings import CompIntelSettings
 from compintel.agents.rag_retriever import RAGRetriever
+from compintel.agents.research_planner import ResearchPlannerAgent
 from compintel.agents.scrape_worker import ScrapeWorker
 from compintel.agents.search_worker import SearchWorker
 from compintel.tracker import ExecutionTracker
@@ -456,6 +457,63 @@ def test_rag_retriever_returns_empty_on_store_error() -> None:
 
     assert result["rag_context"] == []
     assert result["execution_log"][0]["event"] == "completed_with_error"
+
+
+def test_rag_retriever_loads_seed_context_by_default() -> None:
+    retriever = RAGRetriever(top_k=2)
+
+    result = asyncio.run(retriever({"competitor": {"name": "Notion"}}))
+
+    assert result["rag_context"]
+    assert all("Placeholder" not in item["text"] for item in result["rag_context"])
+
+
+def test_research_planner_uses_llm_completion_when_available(monkeypatch) -> None:
+    async def fake_completion(**kwargs) -> str:
+        return '{"Notion": {"phases": [{"phase": "pricing", "queries": ["Notion pricing analysis"]}], "search_strategy": {"sources": ["official_website"]}}}'
+
+    monkeypatch.setenv("LLM_API_KEY", "real-key")
+    planner = ResearchPlannerAgent(completion_fn=fake_completion)
+
+    result = asyncio.run(
+        planner(
+            {
+                "market_segment": "collaboration software",
+                "competitors": [{"name": "Notion"}],
+                "research_questions": ["pricing"],
+            }
+        )
+    )
+
+    assert result["research_plan"]["Notion"]["phases"][0]["queries"] == ["Notion pricing analysis"]
+    assert "llm" in result["execution_log"][0]["detail"]
+
+
+def test_research_planner_falls_back_without_llm_key(monkeypatch) -> None:
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    planner = ResearchPlannerAgent()
+
+    result = asyncio.run(planner({"competitors": [{"name": "Slack"}]}))
+
+    assert result["research_plan"]["Slack"]["phases"][0]["phase"] == "company_overview"
+    assert "template" in result["execution_log"][0]["detail"]
+
+
+def test_pipeline_degrades_without_api_keys(monkeypatch) -> None:
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+    response = asyncio.run(
+        CompIntelGraph().run_competitor_pipeline("分析 Notion 在协作工具市场的竞品")
+    )
+
+    assert response.profiles
+    assert response.profiles[0].search_results
+    assert response.profiles[0].search_results[0].get("error") is True
+    assert response.profiles[0].rag_context
 
 
 def test_langgraph_pipeline_fans_out_competitor_profiles() -> None:

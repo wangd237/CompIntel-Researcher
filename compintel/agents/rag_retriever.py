@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..rag import QdrantStore
+from ..rag import QdrantStore, load_seed_reports
 from .base import BaseCompIntelAgent
 
 
@@ -17,6 +17,8 @@ class RAGRetriever(BaseCompIntelAgent):
     ) -> None:
         super().__init__(model=model)
         self.store = store or QdrantStore()
+        if store is None:
+            load_seed_reports(self.store)
         self.top_k = top_k
 
     async def __call__(self, state: Any) -> dict[str, Any]:
