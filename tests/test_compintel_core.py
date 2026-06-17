@@ -7,6 +7,7 @@ from pathlib import Path
 
 from compintel.execution import CompIntelExecution
 from compintel.bundle import BundleWriter, generate_delivery_bundle
+from compintel.events import COMPINTEL_EVENT_TYPES, COMPINTEL_PIPELINE_EVENT_TYPES
 from compintel.export import MarkdownFormatter
 from compintel.graph import CompIntelGraph
 from compintel.progress import ProgressSummaryFormatter
@@ -43,6 +44,26 @@ def test_tracker_snapshot_and_audit() -> None:
         assert snapshot.decisions == ["test decision"]
         assert snapshot.status == "in_progress"
         assert not audit_path.exists()
+
+
+def test_compintel_event_types_cover_pipeline_events() -> None:
+    expected = {
+        "intent_parsed",
+        "profiling_start",
+        "search_complete",
+        "scrape_complete",
+        "rag_complete",
+        "profile_aggregated",
+        "market_analysis_complete",
+        "swot_complete",
+        "report_ready",
+        "review_passed",
+        "error",
+    }
+
+    assert expected <= set(COMPINTEL_EVENT_TYPES)
+    assert expected == set(COMPINTEL_PIPELINE_EVENT_TYPES)
+    assert "execution_completed" in COMPINTEL_EVENT_TYPES
 
 
 def test_markdown_formatter_writes_report() -> None:

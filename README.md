@@ -7,7 +7,7 @@
 [![RAG](https://img.shields.io/badge/RAG-Qdrant-9cf?logo=qdrant&logoColor=white)](https://qdrant.tech/)
 [![LLM](https://img.shields.io/badge/LLM-DeepSeek%20%7C%20Kimi%20%7C%20GLM-8A2BE2)](https://platform.deepseek.com/)
 [![FastAPI](https://img.shields.io/badge/API-FastAPI%20%2B%20WebSocket-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Tests](https://img.shields.io/badge/tests-41%20passed-brightgreen)](#)
+[![Tests](https://img.shields.io/badge/tests-42%20passed-brightgreen)](#)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 ---
@@ -120,7 +120,7 @@ WS   /ws/compintel             → 实时事件流推送
 
 ```bash
 python -m pytest tests/test_compintel_core.py -q
-# 41 passed ✓
+# 42 passed ✓
 ```
 
 ---
@@ -160,7 +160,7 @@ compintel/
 └── server.py                   # 服务启动
 
 tests/
-└── test_compintel_core.py      # 41 个核心测试（覆盖全链路 + LLM/fallback 双路径）
+└── test_compintel_core.py      # 42 个核心测试（覆盖全链路 + LLM/fallback 双路径）
 ```
 
 ---
