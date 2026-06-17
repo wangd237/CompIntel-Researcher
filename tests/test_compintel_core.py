@@ -15,6 +15,7 @@ from compintel.settings import CompIntelSettings
 from compintel.agents.market_analyst import MarketAnalystAgent
 from compintel.agents.rag_retriever import RAGRetriever
 from compintel.agents.research_planner import ResearchPlannerAgent
+from compintel.agents.report_writer import ReportWriterAgent
 from compintel.agents.scrape_worker import ScrapeWorker
 from compintel.agents.search_worker import SearchWorker
 from compintel.agents.swot_synthesizer import SWOTSynthesizerAgent
@@ -634,6 +635,85 @@ def test_swot_synthesizer_falls_back_without_llm_key(monkeypatch) -> None:
 
     assert result["swot_analysis"]["summary"] == "placeholder SWOT analysis"
     assert result["swot_analysis"]["competitors"][0]["name"] == "Coda"
+    assert "template" in result["execution_log"][0]["detail"]
+
+
+def test_report_writer_uses_llm_completion_when_available(monkeypatch) -> None:
+    async def fake_completion(**kwargs) -> str:
+        return """
+        {
+          "title": "Notion 竞品分析",
+          "executive_summary": "Notion 面临 Coda 与 Microsoft Loop 的竞争。",
+          "sections": [
+            {
+              "title": "竞争格局",
+              "content": "Notion 强在模板生态。[Source: https://www.notion.so]",
+              "key_insights": ["模板生态是差异化来源"]
+            }
+          ],
+          "conclusion": "Notion 应继续强化 AI 工作区。",
+          "sources": ["https://www.notion.so"],
+          "data_gaps": ["缺少最新营收数据"]
+        }
+        """
+
+    monkeypatch.setenv("LLM_API_KEY", "real-key")
+    writer = ReportWriterAgent(completion_fn=fake_completion)
+
+    result = asyncio.run(
+        writer(
+            {
+                "query": "分析 Notion",
+                "intent": {"target": "Notion"},
+                "profiles": [
+                    {
+                        "name": "Notion",
+                        "summary": "Workspace",
+                        "search_results": [{"url": "https://www.notion.so", "title": "Notion"}],
+                    }
+                ],
+                "market_analysis": {"market_overview": "AI workspace market"},
+                "swot_analysis": {"summary": "Strong product-led growth"},
+            }
+        )
+    )
+
+    report = result["report"]
+    assert report["title"] == "Notion 竞品分析"
+    assert report["sections"][0]["content"].endswith("[Source: https://www.notion.so]")
+    assert report["sources"] == ["https://www.notion.so"]
+    assert report["data_gaps"] == ["缺少最新营收数据"]
+    assert "llm" in result["execution_log"][0]["detail"]
+
+
+def test_report_writer_falls_back_without_llm_key(monkeypatch) -> None:
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    writer = ReportWriterAgent()
+
+    result = asyncio.run(
+        writer(
+            {
+                "query": "分析 Notion",
+                "intent": {"target": "Notion"},
+                "profiles": [
+                    {
+                        "name": "Notion",
+                        "summary": "Workspace",
+                        "search_results": [{"url": "https://www.notion.so"}],
+                    }
+                ],
+                "market_analysis": {"growth_trends": ["AI-assisted knowledge work"]},
+                "swot_analysis": {"summary": "Evidence-backed SWOT"},
+            }
+        )
+    )
+
+    report = result["report"]
+    assert report["executive_summary"] == "Analysis for Notion"
+    assert report["sources"] == ["https://www.notion.so"]
+    assert len(report["sections"]) == 3
+    assert "AI-assisted knowledge work" in report["sections"][1]["key_insights"]
     assert "template" in result["execution_log"][0]["detail"]
 
 
