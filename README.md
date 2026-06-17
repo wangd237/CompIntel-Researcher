@@ -68,7 +68,7 @@
 | **意图解析** | LLM (DeepSeek / Kimi / GLM / OpenAI-compatible) + 启发式 fallback | IntentAnalyst |
 | **信息检索** | Tavily + SerpAPI 搜索 / BeautifulSoup 网页抓取 / Qdrant 向量检索 | CompetitorProfiler |
 | **数据模型** | Pydantic v2 — 请求/响应/内部状态全量 Schema 约束 | 类型安全 |
-| **API 服务** | FastAPI + WebSocket — 实时事件流推送 | 对外接口 |
+| **API 服务** | FastAPI + WebSocket — 完成后事件回放 | 对外接口 |
 | **追踪审计** | JSONL 审计日志 + ExecutionTracker (checkpoint / decision / risk 全记录) | 可观测性 |
 | **CLI** | `python -m compintel.run` | 本地入口 |
 
@@ -84,11 +84,11 @@
 ### 安装
 
 ```bash
-# 基础依赖
-pip install pydantic tavily-python beautifulsoup4 qdrant-client
+# 完整依赖（含 CLI + API 服务 + 搜索/抓取/RAG）
+pip install -r requirements.txt
 
-# 完整依赖（含 LLM 调用 + API 服务）
-pip install pydantic tavily-python beautifulsoup4 qdrant-client fastapi uvicorn
+# 可编辑安装（适合本地开发）
+pip install -e .
 ```
 
 ### 30 秒跑通
@@ -106,15 +106,16 @@ python -m compintel.run "分析 Notion 在协作工具市场的主要竞品"
 ### 启动 API 服务
 
 ```bash
-pip install fastapi uvicorn
 uvicorn compintel.api:create_app --factory --reload
 ```
 
 ```
 GET  /health                   → {"status": "ok"}
 POST /api/compintel/analyze    → 竞品分析（JSON 响应）
-WS   /ws/compintel             → 实时事件流推送
+WS   /ws/compintel             → 完成后事件回放（mode=replay）
 ```
+
+> 当前 WebSocket 行为是回放模式：客户端发送 `{ "query": "..." }` 后，服务端先完成一次分析，再按顺序推送事件列表，并在最终 `analysis_ready` 消息中返回报告 bundle 路径。前端可用 `setTimeout` 将事件逐条展示为进度动画。
 
 ### 运行测试
 

@@ -99,6 +99,8 @@ def create_app() -> FastAPI:
                         "type": "analysis_ready",
                         "message": "analysis completed",
                         "data": {
+                            "mode": "replay",
+                            "event_count": len(outcome["events"]),
                             "result": outcome["result"],
                             "tracker": outcome["tracker"],
                             "audit_path": outcome["audit_path"],
