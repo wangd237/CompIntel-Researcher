@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import operator
 from typing import Any, TypedDict
 from typing_extensions import NotRequired
+from typing import Annotated
 
 
 class ExecutionEvent(TypedDict, total=False):
@@ -33,21 +35,25 @@ class ReviewFeedback(TypedDict, total=False):
 
 class CompIntelState(TypedDict, total=False):
     query: str
+    intent: dict[str, Any]
+    target: str
     market_segment: str
     status: str
     competitors: list[dict[str, Any]]
     research_questions: list[str]
     research_plan: dict[str, Any]
-    competitor_profiles: list[CompetitorProfile]
+    profiles: Annotated[list[dict[str, Any]], operator.add]
+    competitor_profiles: Annotated[list[CompetitorProfile], operator.add]
     market_analysis: dict[str, Any]
     swot_analysis: dict[str, Any]
     report: dict[str, Any]
     review_feedback: ReviewFeedback
     messages: list[dict[str, Any]]
-    execution_log: list[ExecutionEvent]
+    retry_count: int
+    warnings: list[str]
+    execution_log: Annotated[list[ExecutionEvent], operator.add]
     errors: list[dict[str, Any]]
     metadata: dict[str, Any]
-    checkpoint_id: NotRequired[str]
     phase: str
     phase_status: str
     phase_owner: str

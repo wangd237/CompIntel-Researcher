@@ -8,6 +8,7 @@ from pathlib import Path
 from compintel.execution import CompIntelExecution
 from compintel.bundle import BundleWriter, generate_delivery_bundle
 from compintel.export import MarkdownFormatter
+from compintel.graph import CompIntelGraph
 from compintel.progress import ProgressSummaryFormatter
 from compintel.rag import QdrantStore, RagDocument, SeedReportLoader
 from compintel.settings import CompIntelSettings
@@ -455,3 +456,48 @@ def test_rag_retriever_returns_empty_on_store_error() -> None:
 
     assert result["rag_context"] == []
     assert result["execution_log"][0]["event"] == "completed_with_error"
+
+
+def test_langgraph_pipeline_fans_out_competitor_profiles() -> None:
+    graph = CompIntelGraph()
+
+    response = asyncio.run(
+        graph.run_competitor_pipeline("分析 Notion 在协作工具市场的竞品")
+    )
+
+    assert len(response.profiles) == 2
+    assert response.report is not None
+    assert response.report["review_feedback"]["approved"] is True
+    assert any(
+        event["node"] == "competitor_profiler"
+        for event in response.report["execution_log"]
+    )
+
+
+def test_langgraph_pipeline_describes_stategraph_and_checkpointer() -> None:
+    graph = CompIntelGraph()
+    description = graph.describe_pipeline()
+
+    assert description["current_capacity"] == "LangGraph StateGraph with competitor fan-out"
+    assert description["profile_subgraph"] == "fan_out -> search_worker | scrape_worker | rag_retriever -> aggregator"
+    assert description["checkpointer"] == "InMemorySaver"
+
+
+def test_langgraph_pipeline_exports_mermaid_graph() -> None:
+    graph = CompIntelGraph()
+
+    mermaid = graph.export_mermaid()
+
+    assert "graph TD" in mermaid
+    assert "intent_analyst" in mermaid
+    assert "reviewer" in mermaid
+
+
+def test_langgraph_checkpointer_records_pipeline_state() -> None:
+    query = "分析 Notion 在协作工具市场的竞品"
+    graph = CompIntelGraph()
+
+    asyncio.run(graph.run_competitor_pipeline(query))
+    checkpoint = graph.get_checkpoint(query)
+
+    assert checkpoint is not None
