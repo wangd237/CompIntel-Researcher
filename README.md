@@ -82,10 +82,10 @@
 
 ```bash
 # 基础依赖
-pip install pydantic
+pip install pydantic tavily-python beautifulsoup4 qdrant-client
 
 # 完整依赖（含 LLM 调用 + API 服务）
-pip install pydantic fastapi uvicorn
+pip install pydantic tavily-python beautifulsoup4 qdrant-client fastapi uvicorn
 ```
 
 ### 30 秒跑通
@@ -117,7 +117,7 @@ WS   /ws/compintel             → 实时事件流推送
 
 ```bash
 python -m pytest tests/test_compintel_core.py -q
-# 9 passed ✓
+# 18 passed ✓
 ```
 
 ---
@@ -214,6 +214,11 @@ cp .env.example .env
 | `SEARCH_PROVIDER` | `tavily` | 搜索服务商。当前支持 `tavily`、`serpapi` |
 | `SERPAPI_API_KEY` | — | 统一搜索 API Key 字段。使用 Tavily 时也填这里 |
 | `COMPINTEL_AUDIT_PATH` | `outputs/compintel_audit.jsonl` | 审计日志路径 |
+
+Qdrant RAG 支持两种运行方式：
+
+- 开发/测试：默认使用 Qdrant `:memory:` 模式，无需 Docker。
+- 持久化服务：安装 Docker 后运行 `docker run -p 6333:6333 qdrant/qdrant`。
 
 **DeepSeek + Tavily 默认配置：**
 

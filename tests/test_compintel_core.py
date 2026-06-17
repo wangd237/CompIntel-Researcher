@@ -9,6 +9,7 @@ from compintel.execution import CompIntelExecution
 from compintel.bundle import BundleWriter, generate_delivery_bundle
 from compintel.export import MarkdownFormatter
 from compintel.progress import ProgressSummaryFormatter
+from compintel.rag import QdrantStore, RagDocument, SeedReportLoader
 from compintel.settings import CompIntelSettings
 from compintel.agents.scrape_worker import ScrapeWorker
 from compintel.agents.search_worker import SearchWorker
@@ -358,3 +359,57 @@ def test_scrape_worker_uses_review_sites_without_website() -> None:
         "https://www.g2.com/search?query=Microsoft+Teams",
         "https://www.capterra.com/search/?query=Microsoft+Teams",
     ]
+
+
+def test_qdrant_store_ingests_and_searches_documents() -> None:
+    store = QdrantStore(collection_name="test_compintel")
+    count = store.ingest(
+        [
+            RagDocument(
+                text="Notion has a flexible workspace product for docs and project collaboration.",
+                source="seed:notion",
+                metadata={"competitor": "Notion"},
+            ),
+            RagDocument(
+                text="Slack focuses on team messaging, channels, and collaboration workflows.",
+                source="seed:slack",
+                metadata={"competitor": "Slack"},
+            ),
+        ]
+    )
+
+    results = store.similarity_search("team collaboration messaging", top_k=2)
+
+    assert count == 2
+    assert len(results) == 2
+    assert all("text" in result for result in results)
+    assert all("score" in result for result in results)
+
+
+def test_qdrant_store_chunks_long_documents() -> None:
+    store = QdrantStore(
+        collection_name="test_compintel_chunks",
+        chunk_size=20,
+        chunk_overlap=5,
+    )
+    count = store.ingest(
+        [
+            RagDocument(
+                text=" ".join(["chunkable"] * 20),
+                source="seed:long",
+            )
+        ]
+    )
+
+    assert count > 1
+
+
+def test_seed_report_loader_loads_default_saas_reports() -> None:
+    store = QdrantStore(collection_name="test_compintel_seed")
+    loader = SeedReportLoader(store=store)
+
+    count = loader.load_seed_reports()
+    results = store.similarity_search("project management collaboration", top_k=3)
+
+    assert count == 12
+    assert len(results) == 3
