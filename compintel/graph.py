@@ -311,6 +311,7 @@ class CompIntelGraph:
                 "profiles": state.get("profiles", []),
                 "market_analysis": state.get("market_analysis", {}),
                 "swot_analysis": state.get("swot_analysis", {}),
+                "review_feedback": state.get("review_feedback", {}),
             }
         )
 

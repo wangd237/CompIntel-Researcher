@@ -16,6 +16,7 @@ from compintel.agents.market_analyst import MarketAnalystAgent
 from compintel.agents.rag_retriever import RAGRetriever
 from compintel.agents.research_planner import ResearchPlannerAgent
 from compintel.agents.report_writer import ReportWriterAgent
+from compintel.agents.reviewer import ReviewerAgent
 from compintel.agents.scrape_worker import ScrapeWorker
 from compintel.agents.search_worker import SearchWorker
 from compintel.agents.swot_synthesizer import SWOTSynthesizerAgent
@@ -715,6 +716,75 @@ def test_report_writer_falls_back_without_llm_key(monkeypatch) -> None:
     assert len(report["sections"]) == 3
     assert "AI-assisted knowledge work" in report["sections"][1]["key_insights"]
     assert "template" in result["execution_log"][0]["detail"]
+
+
+def test_reviewer_uses_llm_weighted_score_when_available(monkeypatch) -> None:
+    async def fake_completion(**kwargs) -> str:
+        return """
+        {
+          "completeness": 8,
+          "accuracy": 9,
+          "actionability": 7,
+          "issues": [],
+          "note": "Report is ready."
+        }
+        """
+
+    monkeypatch.setenv("LLM_API_KEY", "real-key")
+    reviewer = ReviewerAgent(completion_fn=fake_completion)
+
+    result = asyncio.run(
+        reviewer(
+            {
+                "report": {
+                    "executive_summary": "summary",
+                    "sections": [
+                        {
+                            "title": "竞争格局",
+                            "content": "Notion has a template ecosystem. [Source: https://www.notion.so]",
+                            "key_insights": ["templates"],
+                        }
+                    ],
+                    "sources": ["https://www.notion.so"],
+                    "conclusion": "Invest in AI workspace.",
+                },
+                "review_feedback": {"retry_count": 1},
+            }
+        )
+    )
+
+    feedback = result["review_feedback"]
+    assert feedback["score"] == 8.2
+    assert feedback["approved"] is True
+    assert feedback["retry_count"] == 1
+    assert feedback["dimensions"]["accuracy"] == 9.0
+    assert "llm" in result["execution_log"][0]["detail"]
+
+
+def test_reviewer_fallback_scores_structural_quality(monkeypatch) -> None:
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    reviewer = ReviewerAgent()
+
+    result = asyncio.run(
+        reviewer(
+            {
+                "report": {
+                    "executive_summary": "summary",
+                    "sections": [
+                        {"title": "Only section", "content": "No citation", "key_insights": []}
+                    ],
+                    "sources": [],
+                }
+            }
+        )
+    )
+
+    feedback = result["review_feedback"]
+    assert feedback["approved"] is False
+    assert feedback["score"] < 7
+    assert {issue["type"] for issue in feedback["issues"]} >= {"missing_sections", "missing_sources"}
+    assert "rules" in result["execution_log"][0]["detail"]
 
 
 def test_langgraph_pipeline_fans_out_competitor_profiles() -> None:
