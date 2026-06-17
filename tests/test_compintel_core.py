@@ -10,6 +10,7 @@ from compintel.bundle import BundleWriter, generate_delivery_bundle
 from compintel.export import MarkdownFormatter
 from compintel.progress import ProgressSummaryFormatter
 from compintel.settings import CompIntelSettings
+from compintel.agents.search_worker import SearchWorker
 from compintel.tracker import ExecutionTracker
 
 
@@ -208,3 +209,85 @@ def test_settings_ignores_placeholder_secrets(monkeypatch) -> None:
 
     assert settings.llm_api_key is None
     assert settings.search_api_key is None
+
+
+def test_search_worker_uses_provider_client_and_dedupes_results() -> None:
+    class FakeTavilyClient:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def search(self, query: str, **kwargs) -> dict:
+            self.queries.append(query)
+            results = [
+                {
+                    "title": f"Result {idx}",
+                    "url": f"https://example.com/shared-{idx % 2}",
+                    "content": f"Snippet {idx}",
+                }
+                for idx in range(14)
+            ]
+            return {"results": results}
+
+    client = FakeTavilyClient()
+    settings = CompIntelSettings(
+        search_provider="tavily",
+        search_api_key="tvly-real-key",
+    )
+    worker = SearchWorker(client=client, settings=settings)
+
+    result = asyncio.run(
+        worker(
+            {
+                "competitor": {"name": "Notion"},
+                "research_questions": ["pricing", "enterprise strategy"],
+            }
+        )
+    )
+
+    assert client.queries == [
+        "Notion pricing competitive analysis",
+        "Notion enterprise strategy competitive analysis",
+    ]
+    assert len(result["search_results"]) == 2
+    assert {item["source"] for item in result["search_results"]} == {"tavily"}
+
+
+def test_search_worker_limits_results_to_twenty() -> None:
+    class FakeTavilyClient:
+        def search(self, query: str, **kwargs) -> dict:
+            return {
+                "results": [
+                    {
+                        "title": f"Result {idx}",
+                        "url": f"https://example.com/{query.replace(' ', '-')}/{idx}",
+                        "content": f"Snippet {idx}",
+                    }
+                    for idx in range(5)
+                ]
+            }
+
+    settings = CompIntelSettings(search_provider="tavily", search_api_key="tvly-real-key")
+    worker = SearchWorker(client=FakeTavilyClient(), settings=settings)
+
+    result = asyncio.run(
+        worker(
+            {
+                "competitor": {"name": "Slack"},
+                "research_questions": [f"question {idx}" for idx in range(10)],
+            }
+        )
+    )
+
+    assert len(result["search_results"]) == 20
+
+
+def test_search_worker_returns_error_without_api_key() -> None:
+    settings = CompIntelSettings(search_provider="tavily", search_api_key=None)
+    worker = SearchWorker(settings=settings)
+
+    result = asyncio.run(
+        worker({"competitor": {"name": "Teams"}, "research_questions": ["pricing"]})
+    )
+
+    assert result["search_results"][0]["error"] is True
+    assert "not configured" in result["search_results"][0]["message"]
