@@ -12,6 +12,7 @@ from compintel.graph import CompIntelGraph
 from compintel.progress import ProgressSummaryFormatter
 from compintel.rag import QdrantStore, RagDocument, SeedReportLoader
 from compintel.settings import CompIntelSettings
+from compintel.agents.market_analyst import MarketAnalystAgent
 from compintel.agents.rag_retriever import RAGRetriever
 from compintel.agents.research_planner import ResearchPlannerAgent
 from compintel.agents.scrape_worker import ScrapeWorker
@@ -514,6 +515,57 @@ def test_pipeline_degrades_without_api_keys(monkeypatch) -> None:
     assert response.profiles[0].search_results
     assert response.profiles[0].search_results[0].get("error") is True
     assert response.profiles[0].rag_context
+
+
+def test_market_analyst_uses_llm_completion_when_available(monkeypatch) -> None:
+    async def fake_completion(**kwargs) -> str:
+        return """
+        {
+          "market_overview": "Collaboration tools are converging around AI workspaces.",
+          "growth_trends": ["AI-assisted knowledge work", "Cross-app workflow automation"],
+          "competitive_landscape": {
+            "leaders": ["Notion"],
+            "challengers": ["Coda"],
+            "niche": ["Linear"]
+          },
+          "key_differentiators": ["Template ecosystem", "Integrated docs and databases"],
+          "barriers_to_entry": ["High switching costs", "Enterprise security requirements"]
+        }
+        """
+
+    monkeypatch.setenv("LLM_API_KEY", "real-key")
+    analyst = MarketAnalystAgent(completion_fn=fake_completion)
+
+    result = asyncio.run(
+        analyst(
+            {
+                "market_segment": "collaboration software",
+                "profiles": [{"name": "Notion", "summary": "Workspace"}],
+            }
+        )
+    )
+
+    assert result["market_analysis"]["market_overview"].startswith("Collaboration tools")
+    assert result["market_analysis"]["competitive_landscape"]["leaders"] == ["Notion"]
+    assert "llm" in result["execution_log"][0]["detail"]
+
+
+def test_market_analyst_falls_back_without_llm_key(monkeypatch) -> None:
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    analyst = MarketAnalystAgent()
+
+    result = asyncio.run(
+        analyst(
+            {
+                "market_segment": "collaboration software",
+                "profiles": [{"name": "Notion"}, {"name": "Coda"}],
+            }
+        )
+    )
+
+    assert result["market_analysis"]["growth_trends"] == ["placeholder growth trend"]
+    assert "template" in result["execution_log"][0]["detail"]
 
 
 def test_langgraph_pipeline_fans_out_competitor_profiles() -> None:
