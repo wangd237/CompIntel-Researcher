@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "compintel-research"
+version = "0.1.0"
+description = "Agentic competitive intelligence research pipeline with CLI, API, and report bundles."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.12,<3",
+    "typing-extensions>=4.12",
+    "langgraph>=1.0.0a3,<2",
+    "langgraph-checkpoint>=2.1,<3",
+    "qdrant-client>=1.18,<2",
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.30,<1",
+    "beautifulsoup4>=4.12,<5",
+    "tavily-python>=0.7,<1",
+    "json-repair>=0.30,<1",
+    "langgraph-checkpoint-sqlite>=2.0,<3",
+]
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.30,<1",
+]
+sqlite = [
+    "langgraph-checkpoint-sqlite>=2.0,<3",
+]
+dev = [
+    "pytest>=9,<10",
+]
+all = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.30,<1",
+    "langgraph-checkpoint-sqlite>=2.0,<3",
+    "pytest>=9,<10",
+]
+
+[tool.setuptools.packages.find]
+include = ["compintel*"]
