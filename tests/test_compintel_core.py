@@ -17,6 +17,7 @@ from compintel.agents.rag_retriever import RAGRetriever
 from compintel.agents.research_planner import ResearchPlannerAgent
 from compintel.agents.scrape_worker import ScrapeWorker
 from compintel.agents.search_worker import SearchWorker
+from compintel.agents.swot_synthesizer import SWOTSynthesizerAgent
 from compintel.tracker import ExecutionTracker
 
 
@@ -565,6 +566,74 @@ def test_market_analyst_falls_back_without_llm_key(monkeypatch) -> None:
     )
 
     assert result["market_analysis"]["growth_trends"] == ["placeholder growth trend"]
+    assert "template" in result["execution_log"][0]["detail"]
+
+
+def test_swot_synthesizer_uses_llm_completion_when_available(monkeypatch) -> None:
+    async def fake_completion(**kwargs) -> str:
+        return """
+        {
+          "summary": "Notion and Coda compete around flexible workspaces.",
+          "competitors": [
+            {
+              "name": "Notion",
+              "strengths": [{"text": "Strong template ecosystem", "evidence": "search: Notion templates"}],
+              "weaknesses": [{"text": "Complex setup for large teams", "evidence": "review source"}],
+              "opportunities": [{"text": "AI workspace expansion", "evidence": "market trend"}],
+              "threats": [{"text": "Microsoft bundling pressure", "evidence": "Teams integration"}]
+            }
+          ],
+          "cross_analysis": {
+            "common_strengths": [{"text": "Flexible collaboration", "evidence": "profile summaries"}],
+            "differentiators": [{"text": "Notion emphasizes docs/databases", "evidence": "rag context"}]
+          }
+        }
+        """
+
+    monkeypatch.setenv("LLM_API_KEY", "real-key")
+    synthesizer = SWOTSynthesizerAgent(completion_fn=fake_completion)
+
+    result = asyncio.run(
+        synthesizer(
+            {
+                "profiles": [
+                    {
+                        "name": "Notion",
+                        "summary": "Workspace",
+                        "sources": [{"url": "https://www.notion.so"}],
+                    }
+                ],
+                "market_analysis": {"market_overview": "AI workspace market"},
+            }
+        )
+    )
+
+    swot = result["swot_analysis"]
+    assert swot["summary"].startswith("Notion and Coda")
+    assert swot["competitors"][0]["strengths"][0]["evidence"] == "search: Notion templates"
+    assert swot["cross_analysis"]["differentiators"][0]["evidence"] == "rag context"
+    assert "llm" in result["execution_log"][0]["detail"]
+
+
+def test_swot_synthesizer_falls_back_without_llm_key(monkeypatch) -> None:
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    synthesizer = SWOTSynthesizerAgent()
+
+    result = asyncio.run(
+        synthesizer(
+            {
+                "profiles": [{"name": "Coda"}],
+                "market_analysis": {
+                    "market_overview": "collaboration software",
+                    "barriers_to_entry": ["enterprise switching costs"],
+                },
+            }
+        )
+    )
+
+    assert result["swot_analysis"]["summary"] == "placeholder SWOT analysis"
+    assert result["swot_analysis"]["competitors"][0]["name"] == "Coda"
     assert "template" in result["execution_log"][0]["detail"]
 
 

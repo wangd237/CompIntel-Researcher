@@ -117,7 +117,7 @@ WS   /ws/compintel             → 实时事件流推送
 
 ```bash
 python -m pytest tests/test_compintel_core.py -q
-# 31 passed ✓
+# 33 passed ✓
 ```
 
 ---
