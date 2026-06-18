@@ -138,12 +138,13 @@ class MarketAnalystAgent(BaseCompIntelAgent):
             if isinstance(profile, dict) and str(profile.get("summary", "")).strip()
         ]
         segment = market_segment or "target market"
+        trends = self._extract_trends_from_snippets(profiles)
         return {
             "market_overview": (
                 f"{segment} includes {', '.join(names) if names else 'the profiled competitors'}; "
                 f"available evidence emphasizes product positioning, distribution, and collaboration workflows."
             ),
-            "growth_trends": [
+            "growth_trends": trends or [
                 "AI-assisted workflows and knowledge management",
                 "Integrated collaboration across documents, databases, and team communication",
             ],
@@ -158,3 +159,32 @@ class MarketAnalystAgent(BaseCompIntelAgent):
                 "Trust, security, and integration requirements",
             ],
         }
+
+    @staticmethod
+    def _extract_trends_from_snippets(profiles: list[dict[str, Any]]) -> list[str]:
+        _STOP_WORDS = {"the", "a", "an", "is", "are", "was", "were", "of", "in", "on",
+                        "at", "to", "for", "with", "by", "as", "it", "its", "and", "or",
+                        "that", "this", "has", "have", "from", "but", "not", "be", "will"}
+        snippets = []
+        for profile in profiles:
+            for result in (profile.get("search_results") or [])[:5]:
+                text = (result.get("snippet") or "").strip()
+                if text:
+                    snippets.append(text)
+        bigrams: dict[str, int] = {}
+        for text in snippets:
+            words = text.lower().split()
+            for i in range(len(words) - 1):
+                w1, w2 = words[i], words[i + 1]
+                if w1 in _STOP_WORDS or w2 in _STOP_WORDS:
+                    continue
+                if len(w1) < 3 or len(w2) < 3:
+                    continue
+                bigram = f"{w1} {w2}"
+                # uppercase-priority: bump score if original words were capitalised
+                orig1 = text.split()[i] if i < len(text.split()) else w1
+                orig2 = text.split()[i + 1] if i + 1 < len(text.split()) else w2
+                boost = 2 if (orig1[0].isupper() and orig2[0].isupper()) else 1
+                bigrams[bigram] = bigrams.get(bigram, 0) + boost
+        return [bg for bg, cnt in sorted(bigrams.items(), key=lambda x: x[1], reverse=True)
+                if cnt >= 3][:5]

@@ -201,6 +201,19 @@ class SWOTSynthesizerAgent(BaseCompIntelAgent):
         }
 
     def _first_evidence(self, profile: dict[str, Any]) -> str:
+        snippets = (profile.get("search_results") or [])
+        for result in (snippets if isinstance(snippets, list) else []):
+            if isinstance(result, dict):
+                text = (result.get("snippet") or "").strip()
+                if text:
+                    return text[:200]
+        scraped = (profile.get("scraped_content") or [])
+        for entry in (scraped if isinstance(scraped, list) else []):
+            if isinstance(entry, dict):
+                content = (entry.get("content") or "").strip()
+                if content:
+                    return content[:200]
+        # fallback to source URLs / labels
         for key in ("search_results", "scraped_content", "rag_context", "sources"):
             values = profile.get(key, [])
             for value in values if isinstance(values, list) else [values]:

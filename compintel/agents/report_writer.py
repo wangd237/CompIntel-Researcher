@@ -253,15 +253,29 @@ class ReportWriterAgent(BaseCompIntelAgent):
         report["executive_summary"] = (
             f"{target} competitive analysis based on collected profiles, market context, and SWOT evidence."
         )[:300]
-        report["conclusion"] = (
-            f"{target} should be evaluated against competitor product scope, workflow depth, ecosystem reach, "
-            f"and switching-cost barriers.{citation}"
-        )
+        report["conclusion"] = self._build_derived_conclusion(target, profiles, sources, citation)
         report["data_gaps"] = [
             "Validate the latest revenue, customer count, and pricing details with authoritative sources.",
             *report.get("data_gaps", []),
         ]
         return report
+
+    @staticmethod
+    def _build_derived_conclusion(target: str, profiles: list[dict[str, Any]],
+                                   sources: list[str], citation: str) -> str:
+        total_search = sum(len(p.get("search_results", [])) for p in profiles if isinstance(p, dict))
+        total_scraped = sum(len(p.get("scraped_content", [])) for p in profiles if isinstance(p, dict))
+        names = [p.get("name", "") for p in profiles if isinstance(p, dict) and p.get("name")]
+        competitor_str = ", ".join(names[:3])
+        if len(names) > 3:
+            competitor_str += f" and {len(names) - 3} more"
+        return (
+            f"Analysis of {target} based on {total_search} search results and "
+            f"{total_scraped} scraped pages across {len(profiles)} competitors"
+            f"{' (' + competitor_str + ')' if competitor_str else ''}. "
+            f"Further LLM-powered analysis is recommended for deeper strategic insights."
+            f"{citation}"
+        )[:400]
 
     def _extract_sources(self, profiles: list[dict[str, Any]]) -> list[str]:
         sources: list[str] = []
