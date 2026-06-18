@@ -23,7 +23,7 @@ class CompIntelSettings:
     strategic_llm: str = "openai:deepseek-reasoner"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
-    llm_timeout_seconds: float = 30.0
+    llm_timeout_seconds: float = 60.0
     search_provider: str = "tavily"
     search_api_key: str | None = None
     report_store_path: str = "outputs/compintel_audit.jsonl"

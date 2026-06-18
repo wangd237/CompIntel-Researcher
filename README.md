@@ -236,6 +236,7 @@ cp .env.example .env
 | `FAST_LLM` | `deepseek-chat` | 快速 Agent 使用的模型 |
 | `SMART_LLM` | `deepseek-chat` | 智能 Agent 使用的模型 |
 | `STRATEGIC_LLM` | `deepseek-reasoner` | 战略/推理 Agent 使用的模型 |
+| `LLM_TIMEOUT_SECONDS` | `60` | 单次 LLM 请求超时秒数。超时后 Agent 自动降级 |
 | `SEARCH_PROVIDER` | `tavily` | 搜索服务商。当前支持 `tavily`、`serpapi` |
 | `SERPAPI_API_KEY` | — | 统一搜索 API Key 字段。使用 Tavily 时也填这里 |
 | `COMPINTEL_AUDIT_PATH` | `outputs/compintel_audit.jsonl` | 审计日志路径 |
