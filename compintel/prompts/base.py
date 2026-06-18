@@ -1,2 +1,0 @@
-"""Placeholder prompt definitions."""
-

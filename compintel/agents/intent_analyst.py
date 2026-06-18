@@ -1,9 +1,12 @@
 """Intent analyst for CompIntel Research."""
 
 from __future__ import annotations
+import logging
 
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from ..llm import _split_provider_model
 from ..parsing import load_repaired_json
@@ -59,6 +62,7 @@ class IntentAnalystAgent(BaseCompIntelAgent):
         try:
             from ..llm import create_chat_completion
         except Exception:
+            logger.exception("Failed to import create_chat_completion")
             return None
 
         provider, model = _split_provider_model(settings.fast_llm)
@@ -86,6 +90,7 @@ class IntentAnalystAgent(BaseCompIntelAgent):
                 temperature=0.2,
             )
         except Exception:
+            logger.exception("LLM call failed, returning None")
             return None
         parsed = load_repaired_json(raw)
         if isinstance(parsed, dict):

@@ -1,10 +1,13 @@
 """JSON parsing helpers for CompIntel Research."""
 
 from __future__ import annotations
+import logging
 
 import json
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 try:
     import json_repair
@@ -39,6 +42,7 @@ def load_repaired_json(text: str) -> Any:
                 return json_repair.loads(candidate)
             return json.loads(candidate)
         except Exception:
+            logger.exception("Failed to parse JSON candidate")
             continue
     return None
 

@@ -11,7 +11,7 @@ from .search_worker import SearchWorker
 
 
 class CompetitorProfilerAgent(BaseCompIntelAgent):
-    """Sequential placeholder for Week 2 profiling flow."""
+    """Fan-out parallel Search, Scrape, and RAG retrieval for each competitor via LangGraph subgraph."""
 
     def __init__(self, model: str = "deepseek-chat") -> None:
         super().__init__(model=model)

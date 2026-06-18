@@ -1,8 +1,11 @@
 """Report writing for CompIntel Research."""
 
 from __future__ import annotations
+import logging
 
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from ..llm import _split_provider_model
 from ..parsing import load_repaired_json, safe_json_dumps
@@ -74,6 +77,7 @@ class ReportWriterAgent(BaseCompIntelAgent):
             try:
                 from ..llm import create_chat_completion
             except Exception:
+                logger.exception("Failed to import create_chat_completion")
                 return None
             completion_fn = create_chat_completion
 
@@ -119,6 +123,7 @@ class ReportWriterAgent(BaseCompIntelAgent):
         except TypeError:
             raw = await completion_fn(prompt)
         except Exception:
+            logger.exception("LLM call failed, returning None")
             return None
 
         parsed = load_repaired_json(str(raw))

@@ -1,8 +1,11 @@
 """FastAPI surface for CompIntel Research."""
 
 from __future__ import annotations
+import logging
 
 import json
+
+logger = logging.getLogger(__name__)
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -84,6 +87,7 @@ def create_app() -> FastAPI:
                 try:
                     outcome = await execution.run_intent(query)
                 except Exception as exc:
+                    logger.exception("Analysis failed")
                     await websocket.send_json(
                         {
                             "type": "execution_failed",
