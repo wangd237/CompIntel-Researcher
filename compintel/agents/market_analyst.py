@@ -101,18 +101,44 @@ class MarketAnalystAgent(BaseCompIntelAgent):
             return self._normalize_analysis(parsed)
         return None
 
+    @staticmethod
+    def _normalize_list_field(value: Any) -> list[str]:
+        """Return a list of strings regardless of whether the LLM returned a string or a list."""
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [str(item) for item in value if str(item).strip()]
+        return []
+
+    @staticmethod
+    def _normalize_list_of_strings(value: Any) -> list[str]:
+        """Handle LLM returning either list[str] or a single string for list fields."""
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            result: list[str] = []
+            for item in value:
+                if isinstance(item, dict):
+                    name = str(item.get("name") or item.get("company") or "")
+                    if name.strip():
+                        result.append(name.strip())
+                elif str(item).strip():
+                    result.append(str(item).strip())
+            return result
+        return []
+
     def _normalize_analysis(self, payload: dict[str, Any]) -> dict[str, Any]:
         landscape = payload.get("competitive_landscape") or {}
         return {
             "market_overview": str(payload.get("market_overview", "")),
-            "growth_trends": [str(item) for item in payload.get("growth_trends", [])],
+            "growth_trends": self._normalize_list_field(payload.get("growth_trends", [])),
             "competitive_landscape": {
-                "leaders": list(landscape.get("leaders", landscape.get("market_leaders", []))),
-                "challengers": list(landscape.get("challengers", [])),
-                "niche": list(landscape.get("niche", landscape.get("niche_players", []))),
+                "leaders": self._normalize_list_of_strings(landscape.get("leaders", landscape.get("market_leaders", []))),
+                "challengers": self._normalize_list_of_strings(landscape.get("challengers", [])),
+                "niche": self._normalize_list_of_strings(landscape.get("niche", landscape.get("niche_players", []))),
             },
-            "key_differentiators": [str(item) for item in payload.get("key_differentiators", [])],
-            "barriers_to_entry": [str(item) for item in payload.get("barriers_to_entry", [])],
+            "key_differentiators": self._normalize_list_field(payload.get("key_differentiators", [])),
+            "barriers_to_entry": self._normalize_list_field(payload.get("barriers_to_entry", [])),
         }
 
     def _fallback_analysis(self, profiles: list[dict[str, Any]], market_segment: str) -> dict[str, Any]:

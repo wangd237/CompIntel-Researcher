@@ -40,10 +40,9 @@ class IntentAnalystAgent(BaseCompIntelAgent):
             target=target,
             market_segment=self._infer_segment(query, target),
             competitors=competitors,
-            research_questions=self._build_questions(target),
+            research_questions=self._build_questions(target, query),
             notes=[
-                "Heuristic fallback used because no LLM adapter is wired yet.",
-                "Replace with JSON-validated model call in Week 1.",
+                "Heuristic fallback used — LLM unavailable. Search queries use industry keywords to discover real competitors.",
             ],
         )
         return self._normalize_payload({
@@ -144,17 +143,28 @@ class IntentAnalystAgent(BaseCompIntelAgent):
         return f"{target} related market"
 
     def _seed_competitors(self, target: str) -> list[CompetitorCandidate]:
-        base = target or "target"
-        seeds = [
-            CompetitorCandidate(name=f"{base} Alternative A", rationale="Likely direct substitute"),
-            CompetitorCandidate(name=f"{base} Alternative B", rationale="Likely platform competitor"),
-        ]
-        return seeds
+        """Return empty list — fallback mode trusts SearchWorker to discover
+        competitors from the query itself rather than fabricating fake names."""
+        return []
 
-    def _build_questions(self, target: str) -> list[str]:
+    def _build_questions(self, target: str, query: str = "") -> list[str]:
+        """Generate broader search questions when LLM is unavailable.
+
+        Instead of fabricating fake competitor names (which pollutes downstream),
+        use industry keywords and the raw query to help SearchWorker find real
+        competitors organically.
+        """
+        parts: list[str] = [target]
+        if query:
+            # extract key industry terms from the original query
+            keywords = ["投资", "竞争", "investment", "competitor", "market",
+                        "technology", "AI", "strategy", "portfolio"]
+            for kw in keywords:
+                if kw.lower() in query.lower():
+                    parts.append(kw)
+        topic = " ".join(dict.fromkeys(parts))  # deduplicate while preserving order
         return [
-            f"{target} 的核心产品定位是什么？",
-            f"{target} 的主要竞品有哪些？",
-            f"{target} 的定价、分发和生态位如何？",
-            f"{target} 相比竞品的差异化优势是什么？",
+            f"{topic} 主要竞争对手及市场格局",
+            f"{topic} 近年投资策略及重点领域",
+            f"{topic} 与同赛道玩家的对比分析",
         ]
