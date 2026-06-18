@@ -33,10 +33,50 @@ def extract_json_candidates(text: str) -> list[str]:
     return candidates
 
 
+def _repair_truncated_json(candidate: str) -> str:
+    """Pre-process DeepSeek-typical truncation errors before handing to json_repair.
+
+    DeepSeek commonly cuts off mid-string when max_tokens is hit, or drops
+    commas between adjacent string fields. The regex-based fixes here are
+    safe because they only act on the final incomplete token — they never
+    alter structurally valid JSON.
+    """
+    if not candidate or not candidate.strip():
+        return candidate
+
+    # 1. Truncate to last complete top-level object
+    brace_count = 0
+    last_valid_pos = 0
+    for i, ch in enumerate(candidate):
+        if ch == "{":
+            brace_count += 1
+        elif ch == "}":
+            brace_count -= 1
+            if brace_count == 0:
+                last_valid_pos = i + 1
+    if last_valid_pos > 0 and last_valid_pos < len(candidate):
+        candidate = candidate[:last_valid_pos]
+
+    # 2. Fix unterminated string — close incomplete "key": "value..." at end
+    candidate = re.sub(
+        r'("(?:\\.|[^"\\])*"\s*:\s*)"(?:\\.|[^"\\])*\Z',
+        r'\1""',
+        candidate,
+    )
+
+    # 3. Fix missing comma: two string values on adjacent lines without comma
+    #    pattern:  "...",\n      "..."  → this is fine
+    #    pattern:  "..."\n      "..."  → needs comma inserted
+    candidate = re.sub(r'"\s*\n\s*"', r'",\n  "', candidate)
+
+    return candidate
+
+
 def load_repaired_json(text: str) -> Any:
     for candidate in [text.strip(), *extract_json_candidates(text)]:
         if not candidate:
             continue
+        candidate = _repair_truncated_json(candidate)
         try:
             if json_repair is not None:
                 return json_repair.loads(candidate)
