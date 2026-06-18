@@ -67,9 +67,9 @@ class SWOTSynthesizerAgent(BaseCompIntelAgent):
                 "name": profile.get("name"),
                 "summary": profile.get("summary"),
                 "sources": profile.get("sources", []),
-                "search_results": profile.get("search_results", [])[:5],
-                "scraped_content": profile.get("scraped_content", [])[:3],
-                "rag_context": profile.get("rag_context", [])[:3],
+                "search_results": profile.get("search_results", [])[:2],
+                "scraped_content": profile.get("scraped_content", [])[:1],
+                "rag_context": profile.get("rag_context", [])[:1],
             }
             for profile in profiles
             if isinstance(profile, dict)

@@ -44,7 +44,14 @@ def _repair_truncated_json(candidate: str) -> str:
     if not candidate or not candidate.strip():
         return candidate
 
-    # 1. Truncate to last complete top-level object
+    # Fast-path: if it is already valid JSON, return immediately
+    try:
+        json.loads(candidate)
+        return candidate
+    except Exception:
+        pass
+
+    # 1. Truncate to last complete top-level object (LAST closing brace where brace_count reaches 0)
     brace_count = 0
     last_valid_pos = 0
     for i, ch in enumerate(candidate):
@@ -54,10 +61,10 @@ def _repair_truncated_json(candidate: str) -> str:
             brace_count -= 1
             if brace_count == 0:
                 last_valid_pos = i + 1
-    if last_valid_pos > 0 and last_valid_pos < len(candidate):
+    if last_valid_pos > 0 and last_valid_pos < len(candidate) and candidate.startswith("{"):
         candidate = candidate[:last_valid_pos]
 
-    # 2. Fix unterminated string — close incomplete "key": "value..." at end
+    # 2. Fix unterminated string - close incomplete "key": "value..." at end
     candidate = re.sub(
         r'("(?:\\.|[^"\\])*"\s*:\s*)"(?:\\.|[^"\\])*\Z',
         r'\1""',
@@ -65,12 +72,9 @@ def _repair_truncated_json(candidate: str) -> str:
     )
 
     # 3. Fix missing comma: two string values on adjacent lines without comma
-    #    pattern:  "...",\n      "..."  → this is fine
-    #    pattern:  "..."\n      "..."  → needs comma inserted
     candidate = re.sub(r'"\s*\n\s*"', r'",\n  "', candidate)
 
     return candidate
-
 
 def load_repaired_json(text: str) -> Any:
     for candidate in [text.strip(), *extract_json_candidates(text)]:

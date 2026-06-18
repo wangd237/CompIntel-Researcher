@@ -89,8 +89,8 @@ class ReportWriterAgent(BaseCompIntelAgent):
                 "website": profile.get("website"),
                 "summary": profile.get("summary"),
                 "sources": profile.get("sources", []),
-                "search_results": profile.get("search_results", [])[:5],
-                "rag_context": profile.get("rag_context", [])[:3],
+                "search_results": profile.get("search_results", [])[:2],
+                "rag_context": profile.get("rag_context", [])[:1],
             }
             for profile in profiles
             if isinstance(profile, dict)

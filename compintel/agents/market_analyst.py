@@ -67,8 +67,8 @@ class MarketAnalystAgent(BaseCompIntelAgent):
                 "name": profile.get("name"),
                 "summary": profile.get("summary"),
                 "sources": profile.get("sources", []),
-                "search_results": profile.get("search_results", [])[:5],
-                "rag_context": profile.get("rag_context", [])[:3],
+                "search_results": profile.get("search_results", [])[:2],
+                "rag_context": profile.get("rag_context", [])[:1],
             }
             for profile in profiles
             if isinstance(profile, dict)
@@ -187,4 +187,4 @@ class MarketAnalystAgent(BaseCompIntelAgent):
                 boost = 2 if (orig1[0].isupper() and orig2[0].isupper()) else 1
                 bigrams[bigram] = bigrams.get(bigram, 0) + boost
         return [bg for bg, cnt in sorted(bigrams.items(), key=lambda x: x[1], reverse=True)
-                if cnt >= 3][:5]
+                if cnt >= 2][:5]
