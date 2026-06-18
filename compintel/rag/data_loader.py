@@ -9,19 +9,18 @@ from .base import RagDocument
 from .qdrant_store import QdrantStore
 
 
-DEFAULT_SAAS_COMPETITORS = [
-    "Notion",
-    "Coda",
-    "Airtable",
-    "Slack",
-    "Microsoft Teams",
-    "Asana",
-    "Monday.com",
-    "ClickUp",
-    "Confluence",
-    "Trello",
-    "Miro",
-    "Linear",
+DEFAULT_SEED_COMPETITORS = [
+    # SaaS / collaboration
+    "Notion", "Coda", "Airtable", "Slack", "Microsoft Teams",
+    "Asana", "Monday.com", "ClickUp", "Confluence", "Trello", "Miro", "Linear",
+    # VC / investment
+    "Sequoia Capital", "Andreessen Horowitz", "Tiger Global Management",
+    "SoftBank Vision Fund", "Accel", "Benchmark",
+    # Big tech / AI
+    "Google", "Microsoft", "Amazon", "Meta", "Apple", "NVIDIA",
+    "OpenAI", "Anthropic", "DeepSeek",
+    # Consumer / hardware
+    "Tesla", "BYD", "Samsung", "Sony",
 ]
 
 
@@ -54,12 +53,12 @@ class SeedReportLoader:
                 "competitor": competitor,
                 "source": f"seed:{competitor}",
                 "text": (
-                    f"{competitor} is a SaaS competitor tracked by CompIntel Research. "
+                    f"{competitor} is a company tracked by CompIntel Research. "
                     f"Seed notes should be replaced by GPT Researcher generated reports "
                     f"before production RAG evaluation."
                 ),
             }
-            for competitor in DEFAULT_SAAS_COMPETITORS
+            for competitor in DEFAULT_SEED_COMPETITORS
         ]
 
 

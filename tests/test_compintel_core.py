@@ -506,7 +506,7 @@ def test_seed_report_loader_loads_default_saas_reports() -> None:
     count = loader.load_seed_reports()
     results = store.similarity_search("project management collaboration", top_k=3)
 
-    assert count == 12
+    assert count == 31  # 12 SaaS + 6 VC + 9 tech/AI + 4 consumer/hardware
     assert len(results) == 3
 
 
