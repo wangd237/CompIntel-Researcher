@@ -3,6 +3,7 @@ compintel-execution-plan.md
 currentTask.md
 .env
 面试准备demo.md
+run-logs/
 # Local runtime artifacts
 outputs/
 .pytest_cache/
