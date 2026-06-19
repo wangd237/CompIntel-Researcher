@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -11,6 +13,8 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
 from .base import Embedder, RagDocument
+
+logger = logging.getLogger(__name__)
 
 
 class HashEmbedder:
@@ -32,11 +36,62 @@ class HashEmbedder:
         return [value / norm for value in vector]
 
 
+class SentenceTransformerEmbedder:
+    """Semantic embedder backed by a local sentence-transformers model.
+
+    The model is lazy-loaded on first ``embed()`` call so that imports and
+    tests stay fast when no RAG indexing is happening.
+    """
+
+    def __init__(self, model_name: str = "BAAI/bge-small-zh", device: str = "cpu") -> None:
+        self.model_name = model_name
+        self.device = device
+        self._model: Any = None
+
+    @property
+    def dimensions(self) -> int:
+        self._ensure_model()
+        model = self._model
+        # sentence-transformers renamed this method across versions
+        dim = getattr(model, "get_embedding_dimension", None) or getattr(model, "get_sentence_embedding_dimension", None)
+        return dim() if dim else 0
+
+    def embed(self, text: str) -> list[float]:
+        self._ensure_model()
+        return self._model.encode(text, normalize_embeddings=True).tolist()  # type: ignore[union-attr]
+
+    def _ensure_model(self) -> None:
+        if self._model is not None:
+            return
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ModuleNotFoundError:
+            raise RuntimeError(
+                "sentence-transformers is not installed. "
+                "Install it with: pip install sentence-transformers"
+            ) from None
+        self._model = SentenceTransformer(self.model_name, device=self.device)
+
+
+def _resolve_embedder(explicit: Embedder | None = None) -> Embedder:
+    if explicit is not None:
+        return explicit
+
+    from ..settings import CompIntelSettings  # deferred to keep rag/ decoupled from settings
+    settings = CompIntelSettings.from_env()
+    model_name = settings.embedding_model.strip()
+    if model_name:
+        logger.info("Loading embedding model: %s", model_name)
+        return SentenceTransformerEmbedder(model_name=model_name)
+
+    return HashEmbedder()
+
+
 @dataclass(slots=True)
 class QdrantStore:
     collection_name: str = "compintel_reports"
     client: QdrantClient | None = None
-    embedder: Embedder = field(default_factory=HashEmbedder)
+    embedder: Embedder = field(default_factory=_resolve_embedder)
     location: str = ":memory:"
     chunk_size: int = 900
     chunk_overlap: int = 120

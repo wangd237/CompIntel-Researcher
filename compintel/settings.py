@@ -24,6 +24,7 @@ class CompIntelSettings:
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_timeout_seconds: float = 60.0
+    embedding_model: str = ""
     search_provider: str = "tavily"
     search_api_key: str | None = None
     report_store_path: str = "outputs/compintel_audit.jsonl"
@@ -53,6 +54,7 @@ class CompIntelSettings:
                 or _setting(values, "OPENAI_API_KEY", "")
             ),
             llm_timeout_seconds=_float_setting(values, "LLM_TIMEOUT_SECONDS", 30.0),
+            embedding_model=_setting(values, "EMBEDDING_MODEL", "").strip(),
             search_provider=search_provider,
             search_api_key=_clean_secret(
                 _setting(values, "SERPAPI_API_KEY", "")
