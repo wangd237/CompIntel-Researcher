@@ -107,6 +107,12 @@ class CompIntelGraph:
     def describe(self) -> list[dict[str, str]]:
         return [{"name": node.name, "description": node.description} for node in self.nodes]
 
+    @staticmethod
+    def _detect_language(query: str) -> str:
+        """Return 'zh' if the query is predominantly Chinese, 'en' otherwise."""
+        chinese_chars = sum(1 for c in query if '一' <= c <= '鿯')
+        return "zh" if chinese_chars >= 2 else "en"
+
     async def run_intent_only(self, query: str) -> dict[str, Any]:
         return await self.intent_analyst(query)
 
@@ -210,9 +216,12 @@ class CompIntelGraph:
         return graph.compile(checkpointer=self.checkpointer)
 
     async def _intent_node(self, state: CompIntelState) -> dict[str, Any]:
-        result = await self.intent_analyst(state.get("query", ""))
+        query = state.get("query", "")
+        result = await self.intent_analyst(query)
         intent = result.get("intent") or {}
+        lang = self._detect_language(query)
         return {
+            "language": lang,
             "intent": intent,
             "target": result.get("target") or intent.get("target"),
             "market_segment": result.get("market_segment") or intent.get("market_segment"),
@@ -318,6 +327,7 @@ class CompIntelGraph:
             {
                 "profiles": state.get("profiles", []),
                 "market_segment": state.get("market_segment"),
+                "language": state.get("language", "en"),
             }
         )
 
@@ -326,6 +336,7 @@ class CompIntelGraph:
             {
                 "profiles": state.get("profiles", []),
                 "market_analysis": state.get("market_analysis", {}),
+                "language": state.get("language", "en"),
             }
         )
 
@@ -338,6 +349,7 @@ class CompIntelGraph:
                 "market_analysis": state.get("market_analysis", {}),
                 "swot_analysis": state.get("swot_analysis", {}),
                 "review_feedback": state.get("review_feedback", {}),
+                "language": state.get("language", "en"),
             }
         )
 

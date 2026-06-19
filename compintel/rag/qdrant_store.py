@@ -108,13 +108,16 @@ class QdrantStore:
         """Create a store whose location is read from CompIntelSettings.
 
         Falls back to ``:memory:`` when no explicit QDRANT_PATH is configured,
-        so that tests and ad-hoc runs stay lightweight.
+        or when the disk path cannot be locked (e.g. during parallel tests).
         """
         from ..settings import CompIntelSettings  # deferred import
         settings = CompIntelSettings.from_env()
         path = (settings.qdrant_path or "").strip()
         if path:
-            return cls(collection_name=collection_name, location=path)
+            try:
+                return cls(collection_name=collection_name, location=path)
+            except Exception:
+                logger.warning("Qdrant disk path %s locked, falling back to :memory:", path)
         return cls(collection_name=collection_name)
 
     def ensure_collection(self) -> None:

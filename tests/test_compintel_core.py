@@ -29,6 +29,7 @@ def _disable_env_services(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "replace-with-your-openai-api-key")
     monkeypatch.setenv("SERPAPI_API_KEY", "tvly-your_tavily_key_here")
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-your_tavily_key_here")
+    monkeypatch.setenv("QDRANT_PATH", "")  # force :memory: to avoid disk-lock in tests
 
 
 def test_tracker_snapshot_and_audit() -> None:

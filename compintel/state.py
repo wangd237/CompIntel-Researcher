@@ -35,6 +35,7 @@ class ReviewFeedback(TypedDict, total=False):
 
 class CompIntelState(TypedDict, total=False):
     query: str
+    language: str
     intent: dict[str, Any]
     target: str
     market_segment: str
