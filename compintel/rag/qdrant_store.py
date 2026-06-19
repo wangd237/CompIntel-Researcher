@@ -98,7 +98,24 @@ class QdrantStore:
 
     def __post_init__(self) -> None:
         if self.client is None:
-            self.client = QdrantClient(location=self.location)
+            if self.location == ":memory:":
+                self.client = QdrantClient(location=":memory:")
+            else:
+                self.client = QdrantClient(path=self.location)
+
+    @classmethod
+    def from_settings(cls, collection_name: str = "compintel_reports") -> "QdrantStore":
+        """Create a store whose location is read from CompIntelSettings.
+
+        Falls back to ``:memory:`` when no explicit QDRANT_PATH is configured,
+        so that tests and ad-hoc runs stay lightweight.
+        """
+        from ..settings import CompIntelSettings  # deferred import
+        settings = CompIntelSettings.from_env()
+        path = (settings.qdrant_path or "").strip()
+        if path:
+            return cls(collection_name=collection_name, location=path)
+        return cls(collection_name=collection_name)
 
     def ensure_collection(self) -> None:
         assert self.client is not None

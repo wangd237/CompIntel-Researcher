@@ -27,6 +27,7 @@ class CompIntelSettings:
     embedding_model: str = ""
     search_provider: str = "tavily"
     search_api_key: str | None = None
+    qdrant_path: str = ""
     report_store_path: str = "outputs/compintel_audit.jsonl"
 
     @property
@@ -60,6 +61,7 @@ class CompIntelSettings:
                 _setting(values, "SERPAPI_API_KEY", "")
                 or _setting(values, "TAVILY_API_KEY", "")
             ),
+            qdrant_path=_setting(values, "QDRANT_PATH", ""),
             report_store_path=_setting(values, "COMPINTEL_AUDIT_PATH", "outputs/compintel_audit.jsonl"),
         )
 

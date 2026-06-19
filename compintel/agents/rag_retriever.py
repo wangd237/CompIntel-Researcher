@@ -24,7 +24,7 @@ class RAGRetriever(BaseCompIntelAgent):
         top_k: int = 5,
     ) -> None:
         super().__init__(model=model)
-        self.store = store or QdrantStore()
+        self.store = store or QdrantStore.from_settings()
         self.top_k = top_k
 
     async def __call__(self, state: Any) -> dict[str, Any]:

@@ -6,6 +6,7 @@ currentTask.md
 run-logs/
 # Local runtime artifacts
 outputs/
+qdrant_data/
 .pytest_cache/
 __pycache__/
 *.py[cod]
