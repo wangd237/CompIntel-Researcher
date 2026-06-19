@@ -552,7 +552,9 @@ def test_rag_retriever_returns_empty_on_store_error() -> None:
 
 
 def test_rag_retriever_loads_seed_context_by_default() -> None:
-    retriever = RAGRetriever(top_k=2)
+    store = QdrantStore(collection_name="test_rag_retriever_seeds")
+    SeedReportLoader(store=store).load_seed_reports()
+    retriever = RAGRetriever(store=store, top_k=2)
 
     result = asyncio.run(retriever({"competitor": {"name": "Notion"}}))
 
@@ -984,7 +986,7 @@ def test_langgraph_pipeline_describes_stategraph_and_checkpointer() -> None:
     graph = CompIntelGraph()
     description = graph.describe_pipeline()
 
-    assert description["current_capacity"] == "LangGraph StateGraph with competitor fan-out"
+    assert description["current_capacity"] == "LangGraph StateGraph with competitor fan-out + RAG write-back"
     assert description["profile_subgraph"] == "fan_out -> search_worker | scrape_worker | rag_retriever -> aggregator"
     assert description["checkpointer"] == "InMemorySaver"
 

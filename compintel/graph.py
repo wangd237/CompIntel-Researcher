@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import operator
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -25,6 +26,7 @@ from .state import CompIntelState
 class CompetitorProfileGraphState(TypedDict, total=False):
     competitor: dict[str, Any]
     research_questions: list[str]
+    market_segment: str
     search_results: dict[str, Any]
     scraped_content: dict[str, Any]
     rag_context: dict[str, Any]
@@ -76,6 +78,7 @@ class CompIntelGraph:
                 GraphNode("swot_synthesizer", "Build SWOT matrix"),
                 GraphNode("report_writer", "Write the final report"),
                 GraphNode("reviewer", "Gate the report for quality"),
+                GraphNode("rag_ingest", "Write approved report back into RAG memory"),
             ]
         self.intent_analyst = IntentAnalystAgent(model=self.model)
         self.research_planner = ResearchPlannerAgent(model=self.model)
@@ -84,8 +87,22 @@ class CompIntelGraph:
         self.swot_synthesizer = SWOTSynthesizerAgent(model=self.model)
         self.report_writer = ReportWriterAgent(model=self.model)
         self.reviewer = ReviewerAgent(model=self.model)
+        self._bootstrap_rag_seeds()
         self.profile_app = self._build_profile_graph()
         self.app = self._build_graph()
+
+    def _bootstrap_rag_seeds(self) -> None:
+        """Load bootstrap seed reports into Qdrant so RAG has initial data."""
+        try:
+            from .rag import load_seed_reports
+            store = self.competitor_profiler.rag_retriever.store
+            if store.client is None or store.client.get_collections() is None:
+                return
+            collection_names = {c.name for c in store.client.get_collections().collections}
+            if store.collection_name not in collection_names:
+                load_seed_reports(store)
+        except Exception:
+            pass  # bootstrap is optional; RAG works with historical reports alone
 
     def describe(self) -> list[dict[str, str]]:
         return [{"name": node.name, "description": node.description} for node in self.nodes]
@@ -135,9 +152,11 @@ class CompIntelGraph:
                 "swot_synthesizer",
                 "report_writer",
                 "reviewer",
+                "rag_ingest",
             ],
-            "current_capacity": "LangGraph StateGraph with competitor fan-out",
+            "current_capacity": "LangGraph StateGraph with competitor fan-out + RAG write-back",
             "profile_subgraph": "fan_out -> search_worker | scrape_worker | rag_retriever -> aggregator",
+            "rag_loop": "each approved report is ingested back into Qdrant as historical analysis memory",
             "checkpointer": type(self.checkpointer).__name__,
         }
 
@@ -173,6 +192,7 @@ class CompIntelGraph:
         graph.add_node("swot_synthesizer", self._swot_node)
         graph.add_node("report_writer", self._report_node)
         graph.add_node("reviewer", self._review_node)
+        graph.add_node("rag_ingest", self._rag_ingest_node)
 
         graph.add_edge(START, "intent_analyst")
         graph.add_edge("intent_analyst", "research_planner")
@@ -184,8 +204,9 @@ class CompIntelGraph:
         graph.add_conditional_edges(
             "reviewer",
             self._review_route,
-            {"approved": END, "revise": "report_writer"},
+            {"approved": "rag_ingest", "revise": "report_writer"},
         )
+        graph.add_edge("rag_ingest", END)
         return graph.compile(checkpointer=self.checkpointer)
 
     async def _intent_node(self, state: CompIntelState) -> dict[str, Any]:
@@ -216,6 +237,7 @@ class CompIntelGraph:
                 {
                     "competitor": competitor,
                     "research_questions": state.get("research_questions", []),
+                    "market_segment": state.get("market_segment", ""),
                 },
             )
             for competitor in competitors
@@ -226,6 +248,7 @@ class CompIntelGraph:
             {
                 "competitor": state.get("competitor") or {},
                 "research_questions": state.get("research_questions", []),
+                "market_segment": state.get("market_segment", ""),
                 "execution_log": [],
             }
         )
@@ -258,7 +281,10 @@ class CompIntelGraph:
 
     async def _profile_rag_node(self, state: CompetitorProfileGraphState) -> dict[str, Any]:
         result = await self.competitor_profiler.rag_retriever(
-            {"competitor": state.get("competitor") or {}}
+            {
+                "competitor": state.get("competitor") or {},
+                "market_segment": state.get("market_segment", ""),
+            }
         )
         return {
             "rag_context": result,
@@ -337,6 +363,72 @@ class CompIntelGraph:
         if feedback.get("approved") or int(feedback.get("retry_count", 0)) >= ReviewerAgent.MAX_RETRIES:
             return "approved"
         return "revise"
+
+    async def _rag_ingest_node(self, state: CompIntelState) -> dict[str, Any]:
+        """Ingest the approved report into Qdrant as historical analysis memory.
+
+        This is the write-path of the RAG loop: every completed analysis
+        feeds back into the vector store so that future queries in the
+        same market segment can retrieve past insights.
+        """
+        target = state.get("target") or state.get("intent", {}).get("target", "unknown")
+        market_segment = state.get("market_segment", "")
+        report = state.get("report", {})
+        swot = state.get("swot_analysis", {})
+        market = state.get("market_analysis", {})
+        profiles = state.get("profiles", [])
+
+        documents = []
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Ingest executive summary / conclusion
+        exec_summary = report.get("executive_summary", "")
+        conclusion = report.get("conclusion", "")
+        if exec_summary or conclusion:
+            documents.append({
+                "text": f"Target: {target}\nMarket: {market_segment}\nExecutive Summary: {exec_summary}\nConclusion: {conclusion}",
+                "source": f"report:{target}:{now}",
+                "metadata": {"report_type": "executive_summary", "target": target,
+                             "market_segment": market_segment, "ingested_at": now},
+            })
+
+        # Ingest SWOT per competitor
+        for comp in (swot.get("competitors") or []):
+            if isinstance(comp, dict) and comp.get("name"):
+                documents.append({
+                    "text": f"SWOT for {comp.get('name')}: {comp}",
+                    "source": f"swot:{comp.get('name')}:{now}",
+                    "metadata": {"report_type": "swot", "target": target,
+                                 "competitor": comp.get("name"),
+                                 "market_segment": market_segment, "ingested_at": now},
+                })
+
+        # Ingest market analysis
+        if market:
+            documents.append({
+                "text": f"Market analysis for {market_segment}: {market}",
+                "source": f"market:{target}:{now}",
+                "metadata": {"report_type": "market_analysis", "target": target,
+                             "market_segment": market_segment, "ingested_at": now},
+            })
+
+        if documents:
+            try:
+                ingested = self.competitor_profiler.rag_retriever.store.ingest(documents)
+                return {
+                    "execution_log": [{
+                        "node": "rag_ingest", "event": "completed",
+                        "detail": f"Ingested {ingested} chunks into RAG memory for {target}",
+                    }]
+                }
+            except Exception as exc:
+                return {
+                    "execution_log": [{
+                        "node": "rag_ingest", "event": "completed_with_error",
+                        "detail": f"RAG ingest failed (non-fatal): {exc}",
+                    }]
+                }
+        return {"execution_log": [{"node": "rag_ingest", "event": "completed", "detail": "no documents to ingest"}]}
 
     def _config(self, query: str) -> dict[str, Any]:
         thread_id = f"compintel:{abs(hash(query))}"
