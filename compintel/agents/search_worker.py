@@ -10,52 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
 from typing import Any
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from ..settings import CompIntelSettings
 from .base import BaseCompIntelAgent
-
-# ── Windows SSL certificate workaround ──────────────────────────────────
-# Python on Windows (especially in Conda environments) often cannot find
-# the system CA bundle, causing SSLEOFError on HTTPS connections that
-# work fine in curl / browsers.  This helper locates a valid bundle at
-# module-load time and sets SSL_CERT_FILE if needed.
-
-_WINDOWS_CA_PATHS = [
-    # certifi (commonly installed alongside requests / httpx)
-    lambda: __import__("certifi").where(),
-    # Conda standard paths
-    os.path.expandvars(r"%CONDA_PREFIX%\Library\ssl\cacert.pem"),
-    os.path.expandvars(r"%CONDA_PREFIX%\Library\ssl\cert.pem"),
-    os.path.expandvars(r"%CONDA_PREFIX%\ssl\cert.pem"),
-    # pip / system Python
-    os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python310\Lib\site-packages\pip\_vendor\certifi\cacert.pem"),
-    os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python311\Lib\site-packages\pip\_vendor\certifi\cacert.pem"),
-]
-
-def _ensure_ssl_certs() -> None:
-    """Try to set SSL_CERT_FILE so that httpx/requests can validate TLS."""
-    if os.environ.get("SSL_CERT_FILE"):
-        return  # already configured
-
-    if sys.platform != "win32":
-        return  # macOS/Linux typically find certs via system paths
-
-    for candidate in _WINDOWS_CA_PATHS:
-        try:
-            path = candidate() if callable(candidate) else candidate
-        except Exception:
-            continue
-        if path and os.path.isfile(path):
-            os.environ["SSL_CERT_FILE"] = path
-            return
-
-
-_ensure_ssl_certs()
 
 logger = logging.getLogger(__name__)
 
@@ -281,13 +241,36 @@ class SearchWorker(BaseCompIntelAgent):
         ]
 
     def _search_tavily(self, query: str, settings: CompIntelSettings) -> list[dict[str, Any]]:
-        client = self.client
-        if client is None:
-            from tavily import TavilyClient
+        # Test-injected client path
+        if self.client is not None:
+            payload = self.client.search(query)
+            return [
+                self._normalize_result(item, query=query, source="tavily")
+                for item in (payload.get("results") if isinstance(payload, dict) else [])
+            ]
 
-            client = TavilyClient(api_key=settings.search_api_key)
+        # Direct REST call via urllib — avoids httpx (used by tavily-python
+        # SDK) which hits SSLEOFError on Windows when OpenSSL/Schannel TLS
+        # negotiation disagrees with the server.  urllib uses the native
+        # Windows TLS stack (Schannel) which is what curl uses too.
+        import json as _json
 
-        payload = client.search(query, search_depth="basic", max_results=5)
+        body = _json.dumps({
+            "api_key": settings.search_api_key,
+            "query": query,
+            "search_depth": "basic",
+            "max_results": 5,
+        }).encode("utf-8")
+
+        req = Request(
+            "https://api.tavily.com/search",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(req, timeout=30) as resp:
+            payload = _json.loads(resp.read().decode("utf-8"))
+
         return [
             self._normalize_result(item, query=query, source="tavily")
             for item in payload.get("results", [])
