@@ -361,6 +361,7 @@ class LLMService:
                     max_tokens=reasoning_max_tokens,
                     temperature=temperature,
                     timeout=timeout,
+                    thinking_mode="thinking",
                 )
                 reasoning_text = (raw.get("reasoning_content") or raw.get("content") or "").strip()
                 if reasoning_text:

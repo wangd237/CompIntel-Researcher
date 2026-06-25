@@ -19,11 +19,11 @@ LLM_PROVIDER_PREFIXES = {
 @dataclass(slots=True)
 class CompIntelSettings:
     llm_provider: str = "deepseek"
-    fast_llm: str = "openai:deepseek-chat"
-    smart_llm: str = "openai:deepseek-chat"
-    strategic_llm: str = "openai:deepseek-chat"
-    reasoning_llm: str = "openai:deepseek-reasoner"
-    formatting_llm: str = "openai:deepseek-chat"
+    fast_llm: str = "openai:deepseek-v4-flash"
+    smart_llm: str = "openai:deepseek-v4-pro"
+    strategic_llm: str = "openai:deepseek-v4-pro"
+    reasoning_llm: str = "openai:deepseek-v4-pro"
+    formatting_llm: str = "openai:deepseek-v4-flash"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_timeout_seconds: float = 90.0
@@ -52,11 +52,11 @@ class CompIntelSettings:
 
         return cls(
             llm_provider=llm_provider,
-            fast_llm=_normalize_model(_setting(values, "FAST_LLM", "deepseek-chat"), llm_provider),
-            smart_llm=_normalize_model(_setting(values, "SMART_LLM", "deepseek-chat"), llm_provider),
-            strategic_llm=_normalize_model(_setting(values, "STRATEGIC_LLM", "deepseek-chat"), llm_provider),
-            reasoning_llm=_normalize_model(_setting(values, "REASONING_LLM", "deepseek-reasoner"), llm_provider),
-            formatting_llm=_normalize_model(_setting(values, "FORMATTING_LLM", "deepseek-chat"), llm_provider),
+            fast_llm=_normalize_model(_setting(values, "FAST_LLM", "deepseek-v4-flash"), llm_provider),
+            smart_llm=_normalize_model(_setting(values, "SMART_LLM", "deepseek-v4-pro"), llm_provider),
+            strategic_llm=_normalize_model(_setting(values, "STRATEGIC_LLM", "deepseek-v4-pro"), llm_provider),
+            reasoning_llm=_normalize_model(_setting(values, "REASONING_LLM", "deepseek-v4-pro"), llm_provider),
+            formatting_llm=_normalize_model(_setting(values, "FORMATTING_LLM", "deepseek-v4-flash"), llm_provider),
             llm_base_url=_setting(values, "LLM_BASE_URL", "") or _setting(values, "OPENAI_BASE_URL", "") or None,
             llm_api_key=_clean_secret(
                 _setting(values, "LLM_API_KEY", "")

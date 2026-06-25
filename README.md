@@ -295,9 +295,11 @@ cp .env.example .env
 | `LLM_PROVIDER` | `deepseek` | LLM 服务商。当前支持 `deepseek`、`kimi`、`glm`、`openai-compatible` |
 | `LLM_API_KEY` | — | 统一 LLM API Key 字段 |
 | `LLM_BASE_URL` | `https://api.deepseek.com/v1` | OpenAI-compatible 服务地址 |
-| `FAST_LLM` | `deepseek-chat` | 快速 Agent 使用的模型 |
-| `SMART_LLM` | `deepseek-chat` | 智能 Agent 使用的模型 |
-| `STRATEGIC_LLM` | `deepseek-reasoner` | 战略/推理 Agent 使用的模型 |
+| `FAST_LLM` | `deepseek-v4-flash` | 快速 Agent 使用的模型（意图解析、规划） |
+| `SMART_LLM` | `deepseek-v4-pro` | 智能 Agent 使用的模型（市场分析、编辑） |
+| `STRATEGIC_LLM` | `deepseek-v4-pro` | 战略 Agent 使用的模型（SWOT、审阅） |
+| `REASONING_LLM` | `deepseek-v4-pro` | 推理模型（+ `thinking_mode: thinking`） |
+| `FORMATTING_LLM` | `deepseek-v4-flash` | 格式化模型（非思考模式，JSON 输出） |
 | `LLM_TIMEOUT_SECONDS` | `60` | 单次 LLM 请求超时秒数。超时后 Agent 自动降级 |
 | `EMBEDDING_MODEL` | `BAAI/bge-small-zh` | 本地 embedding 模型。留空则使用轻量 HashEmbedder |
 | `HF_HOME` | `D:/huggingface` | HuggingFace 模型缓存目录 |
@@ -316,9 +318,11 @@ Qdrant RAG 支持两种运行方式：
 LLM_PROVIDER=deepseek
 LLM_API_KEY=replace-with-your-deepseek-api-key
 LLM_BASE_URL=https://api.deepseek.com/v1
-FAST_LLM=deepseek-chat
-SMART_LLM=deepseek-chat
-STRATEGIC_LLM=deepseek-reasoner
+FAST_LLM=deepseek-v4-flash
+SMART_LLM=deepseek-v4-pro
+STRATEGIC_LLM=deepseek-v4-pro
+REASONING_LLM=deepseek-v4-pro
+FORMATTING_LLM=deepseek-v4-flash
 
 SEARCH_PROVIDER=tavily
 SERPAPI_API_KEY=tvly-your_tavily_key_here

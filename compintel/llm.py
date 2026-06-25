@@ -20,6 +20,7 @@ async def create_chat_completion(
     max_tokens: int = 1000,
     temperature: float = 0.2,
     timeout: float | None = None,
+    thinking_mode: str | None = None,
     **_: Any,
 ) -> str:
     """Call an OpenAI-compatible chat completions endpoint.
@@ -44,6 +45,8 @@ async def create_chat_completion(
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+    if thinking_mode:
+        payload["thinking_mode"] = thinking_mode
     effective_timeout = timeout if timeout is not None else settings.llm_timeout_seconds
     return await asyncio.to_thread(
         _post_chat_completion,
@@ -61,6 +64,7 @@ async def create_chat_completion_raw(
     max_tokens: int = 1000,
     temperature: float = 0.2,
     timeout: float | None = None,
+    thinking_mode: str | None = None,
     **_: Any,
 ) -> dict[str, str | None]:
     """Like :func:`create_chat_completion` but returns the raw message dict
@@ -84,6 +88,8 @@ async def create_chat_completion_raw(
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+    if thinking_mode:
+        payload["thinking_mode"] = thinking_mode
     effective_timeout = timeout if timeout is not None else settings.llm_timeout_seconds
     return await asyncio.to_thread(
         _post_chat_completion_raw,
