@@ -1,6 +1,13 @@
-"""Intent analyst for CompIntel Research."""
+"""
+Intent analyst for CompIntel Research.
+
+Primary path: LLM parsing with retries and output validation.
+Heuristic path: only when no API key is configured — never as a
+fallback from LLM timeout (retries handle that).
+"""
 
 from __future__ import annotations
+import asyncio
 import logging
 
 import re
@@ -8,41 +15,108 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from ..llm import _split_provider_model
 from ..parsing import load_repaired_json
+from ..prompts import load_prompt
 from ..settings import CompIntelSettings
 from ..schemas import CompetitorCandidate, IntentAnalysisResponse
 from .base import BaseCompIntelAgent
 
+# Chinese enumeration comma (U+3001) and English comma/semicolon — used to
+# split user-provided company names out of a query on the heuristic path.
+_NAME_SPLIT_RE = re.compile(r"[、,，;；\s]+")
+
+# Generic English keywords that are NEVER valid competitor names.
+# These are dimension labels (pricing, market, technology, product) or
+# query artifacts that the noise filter must catch in both LLM and
+# heuristic outputs.
+_INVALID_COMPETITOR_NAMES: set[str] = {
+    "pricing", "market", "technology", "product", "competitor",
+    "competitors", "analysis", "overview", "summary", "report",
+    "research", "features", "strategy", "company", "companies",
+    "unknown", "placeholder", "n/a", "none", "test", "example",
+    "分析", "研究", "对比", "竞品", "竞争", "市场", "格局", "主要竞品",
+}
+
+_QUERY_ARTIFACT_FRAGMENTS: tuple[str, ...] = (
+    "分析", "研究", "对比", "竞品", "竞争格局", "市场", "赛道", "领域",
+    "主要", "工具", "行业", "报告",
+)
+
+_KNOWN_COMPETITOR_SEEDS: dict[str, list[tuple[str, str | None]]] = {
+    "notion": [
+        ("Coda", "https://coda.io"),
+        ("Confluence", "https://www.atlassian.com/software/confluence"),
+        ("Microsoft Loop", "https://www.microsoft.com/microsoft-loop"),
+    ],
+    "slack": [
+        ("Microsoft Teams", "https://www.microsoft.com/microsoft-teams/group-chat-software"),
+        ("Discord", "https://discord.com"),
+        ("Google Chat", "https://workspace.google.com/products/chat/"),
+    ],
+    "figma": [
+        ("Adobe XD", None),
+        ("Sketch", "https://www.sketch.com"),
+        ("Canva", "https://www.canva.com"),
+    ],
+}
+
+
+def _split_names(raw: str) -> list[str]:
+    """Split a user-provided name list on Chinese / English separators."""
+    parts = _NAME_SPLIT_RE.split(raw.strip())
+    return [p.strip() for p in parts if p.strip() and len(p.strip()) >= 2]
+
+
+def _is_plausible_competitor(name: str) -> bool:
+    """Return False for names that are clearly not company names."""
+    clean = name.strip(" ：:，,。.、 ")
+    if not clean or len(clean) < 2:
+        return False
+    lowered = clean.lower()
+    if lowered in _INVALID_COMPETITOR_NAMES:
+        return False
+    if any(fragment in clean for fragment in _QUERY_ARTIFACT_FRAGMENTS) and not re.search(r"[A-Za-z]", clean):
+        return False
+    # Single Chinese character is not a company name
+    if len(clean) == 1 and '一' <= clean <= '鿿':
+        return False
+    return True
+
 
 class IntentAnalystAgent(BaseCompIntelAgent):
-    """Heuristic first-pass intent parser.
-
-    The production version will call an LLM, but this gives us a runnable
-    Week 1 scaffold and a clear contract for the rest of the graph.
-    """
+    """Intent parser with LLM-primary + heuristic-fallback paths."""
 
     async def __call__(self, state: Any) -> dict[str, Any]:
         settings = CompIntelSettings.from_env()
+        # Support re-parsing a raw LLM response
         if isinstance(state, dict) and "raw_response" in state:
             parsed = load_repaired_json(str(state["raw_response"]))
             if isinstance(parsed, dict):
                 return self._normalize_payload(parsed)
 
-        query = state if isinstance(state, str) else str(getattr(state, "get", lambda *_: "")("query", ""))
-        llm_payload = await self._try_llm_parse(query, settings)
-        if llm_payload is not None:
-            return self._normalize_payload(llm_payload)
+        # Handle both string (direct call) and dict (graph invocation)
+        if isinstance(state, str):
+            query = state
+        else:
+            query = self.read_state(state).query
 
+        # LLM path with retries — only skip when no API key is configured
+        if settings.openai_api_key:
+            llm_payload = await self._try_llm_parse(query, settings)
+            if llm_payload is not None:
+                return self._normalize_payload(llm_payload)
+
+        # Heuristic path (no API key or all LLM retries exhausted)
         target = self._extract_target(query)
-        competitors = self._seed_competitors(target)
+        competitors = self._seed_competitors(target, query)
         result = IntentAnalysisResponse(
             target=target,
             market_segment=self._infer_segment(query, target),
             competitors=competitors,
             research_questions=self._build_questions(target, query),
             notes=[
-                "Heuristic fallback used — LLM unavailable. Search queries use industry keywords to discover real competitors.",
+                "Heuristic fallback used — LLM unavailable or all retries exhausted. "
+                "Competitor names may be incomplete.",
             ],
         )
         return self._normalize_payload({
@@ -55,11 +129,47 @@ class IntentAnalystAgent(BaseCompIntelAgent):
         })
 
     async def _try_llm_parse(self, query: str, settings: CompIntelSettings) -> dict[str, Any] | None:
+        """Call the LLM via LLMService and validate the output."""
         if not settings.openai_api_key:
             return None
 
+        # Backward-compat: test-injected completion_fn takes priority
+        if hasattr(self, 'completion_fn') and self.completion_fn is not None:
+            return await self._legacy_llm_parse(query, settings)
+
+        prompt = load_prompt("intent_analyst")
+        parsed = await self.llm.call_and_parse(
+            prompt.format(query=query),
+            model_key=prompt.model_key,
+            max_tokens=prompt.max_tokens,
+            temperature=prompt.temperature,
+            timeout=45.0,
+        )
+        if not isinstance(parsed, dict):
+            logger.warning("Intent LLM returned unparseable JSON after retries")
+            return None
+
+        # Validate the output
+        competitors = parsed.get("competitors", [])
+        valid_competitors = [
+            c for c in competitors
+            if isinstance(c, dict) and _is_plausible_competitor(c.get("name", ""))
+        ]
+        rejected = len(competitors) - len(valid_competitors)
+        if rejected:
+            logger.info(
+                "Intent validator rejected %d non-company name(s): %s",
+                rejected,
+                [c.get("name") for c in competitors if isinstance(c, dict) and not _is_plausible_competitor(c.get("name", ""))],
+            )
+
+        parsed["competitors"] = valid_competitors
+        return parsed
+
+    async def _legacy_llm_parse(self, query: str, settings: CompIntelSettings) -> dict[str, Any] | None:
+        """Backward-compat path when a test-injected *completion_fn* is present."""
         try:
-            from ..llm import create_chat_completion
+            from ..llm import create_chat_completion, _split_provider_model
         except Exception:
             logger.exception("Failed to import create_chat_completion")
             return None
@@ -67,33 +177,73 @@ class IntentAnalystAgent(BaseCompIntelAgent):
         provider, model = _split_provider_model(settings.fast_llm)
 
         prompt = (
-            "You are CompIntel's intent analyst.\n"
-            "Extract target, market_segment, competitors, research_questions, and notes.\n"
-            "Return strict JSON only.\n"
+            "You are CompIntel's intent analyst. "
+            "Extract the user's research intent from the query below.\n\n"
+            "CRITICAL RULES:\n"
+            "- 'target' is the primary company being analysed (ONE name).\n"
+            "- 'competitors' are OTHER companies to compare against — NOT "
+            "dimension labels like 'pricing', 'market', 'technology', or 'product'. "
+            "These dimension keywords describe what ASPECTS to analyse, they are "
+            "NEVER competitor names. Skip them entirely.\n"
+            "- P2-1: If the user only named 0-1 competitors, proactively suggest 2-4 "
+            "additional major players in the SAME market segment so the analysis "
+            "covers a meaningful competitive landscape.  Add a note explaining each "
+            "addition rationale.\n"
+            "- 'market_segment' is the industry or market category, inferred from "
+            "the query context (e.g. 'collaboration software', 'electric vehicles').\n"
+            "- 'research_questions' are 3-5 questions the analysis should answer.\n\n"
+            "Return strict JSON only:\n"
+            '{"target": "...", "market_segment": "...", '
+            '"competitors": [{"name": "...", "website": null, "rationale": "..."}], '
+            '"research_questions": ["..."], "notes": ["..."]}\n\n'
             f"Query: {query}\n"
-            "JSON schema:\n"
-            "{"
-            '"target": string, '
-            '"market_segment": string, '
-            '"competitors": [{"name": string, "website": string|null, "rationale": string|null}], '
-            '"research_questions": [string], '
-            '"notes": [string]'
-            "}"
         )
-        try:
-            raw = await create_chat_completion(
-                messages=[{"role": "user", "content": prompt}],
-                model=model,
-                llm_provider=provider,
-                max_tokens=1000,
-                temperature=0.2,
-            )
-        except Exception:
-            logger.exception("LLM call failed, returning None")
-            return None
-        parsed = load_repaired_json(raw)
-        if isinstance(parsed, dict):
+
+        last_error: Exception | None = None
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                raw = await self.completion_fn(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=model,
+                    llm_provider=provider,
+                    max_tokens=1000,
+                    temperature=0.2,
+                    timeout=45.0,
+                )
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Intent LLM call failed (attempt %d/%d): %s", attempt, max_attempts, exc)
+                if attempt < max_attempts:
+                    await asyncio.sleep(min(2 ** (attempt - 1), 4))
+                continue
+
+            parsed = load_repaired_json(str(raw))
+            if not isinstance(parsed, dict):
+                logger.warning("Intent LLM returned unparseable JSON (attempt %d/%d)", attempt, max_attempts)
+                if attempt < max_attempts:
+                    await asyncio.sleep(1)
+                continue
+
+            competitors = parsed.get("competitors", [])
+            valid_competitors = [
+                c for c in competitors
+                if isinstance(c, dict) and _is_plausible_competitor(c.get("name", ""))
+            ]
+            rejected = len(competitors) - len(valid_competitors)
+            if rejected:
+                logger.info(
+                    "Intent validator rejected %d non-company name(s): %s",
+                    rejected,
+                    [c.get("name") for c in competitors if isinstance(c, dict) and not _is_plausible_competitor(c.get("name", ""))],
+                )
+            parsed["competitors"] = valid_competitors
             return parsed
+
+        logger.error(
+            "Intent LLM parsing failed after %d attempts (last error: %s)",
+            max_attempts, last_error,
+        )
         return None
 
     def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -103,6 +253,24 @@ class IntentAnalystAgent(BaseCompIntelAgent):
         notes = payload.get("notes") or intent.get("notes") or []
         target = payload.get("target") or intent.get("target") or "unknown"
         market_segment = payload.get("market_segment") or intent.get("market_segment") or "unknown"
+
+        # Cap competitors at 5 (hard limit) to prevent fan-out explosion and
+        # keep the comparison matrix scannable.  LLM + heuristic + seed paths
+        # all funnel through here so this is the single enforcement point.
+        MAX_COMPETITORS = 5
+        if len(competitors) > MAX_COMPETITORS:
+            truncated_names = [
+                (c.get("name") if isinstance(c, dict) else str(c))
+                for c in competitors[MAX_COMPETITORS:]
+            ]
+            notes.append(
+                f"竞品数量从 {len(competitors)} 截断至 {MAX_COMPETITORS}，"
+                f"已移除: {', '.join(truncated_names)}"
+            )
+            logger.info("Truncated competitors from %d to %d: removed %s",
+                        len(competitors), MAX_COMPETITORS, truncated_names)
+            competitors = competitors[:MAX_COMPETITORS]
+
         normalized_intent = {
             **intent,
             "target": target,
@@ -124,15 +292,29 @@ class IntentAnalystAgent(BaseCompIntelAgent):
         }
 
     def _extract_target(self, query: str) -> str:
+        """Extract the primary analysis target from the query.
+
+        When the user writes e.g. "分析 Notion、Coda 的竞品格局" the first
+        company is treated as the primary *target* and the remainder as
+        *seed competitors* (see ``_seed_competitors``).
+        """
         patterns = [
-            r"(?:分析|研究|对比)\s*([A-Za-z0-9\u4e00-\u9fff .&\-]+?)(?:的竞品|竞争格局|在|市场|$)",
-            r"(?:what is|who are|analyze|research)\s+([A-Za-z0-9 .&\-]+?)\s+(?:competitors|competition|competitive)",
+            r"(?:分析|研究|对比)\s*([A-Za-z0-9一-鿿 .&\-—–、]+?)(?:的竞品|竞争格局|在|市场|$)",
+            r"(?:what is|who are|analyze|research)\s+([A-Za-z0-9 .&\-—–]+?)\s+(?:competitors|competition|competitive)",
         ]
         for pattern in patterns:
             match = re.search(pattern, query, flags=re.IGNORECASE)
             if match:
-                return match.group(1).strip(" ：:，,。. ")
+                raw = match.group(1).strip(" ：:，,。.、 ")
+                # If raw still contains 、, take only the first fragment.
+                parts = _split_names(raw)
+                return parts[0] if parts else (raw or "unknown")
+
         cleaned = query.strip()
+        # Last resort: try to salvage the first named entity from the query.
+        names = _split_names(cleaned)
+        if names:
+            return names[0]
         return cleaned[:48] if cleaned else "unknown"
 
     def _infer_segment(self, query: str, target: str) -> str:
@@ -142,10 +324,58 @@ class IntentAnalystAgent(BaseCompIntelAgent):
             return "knowledge management"
         return f"{target} related market"
 
-    def _seed_competitors(self, target: str) -> list[CompetitorCandidate]:
-        """Return empty list — fallback mode trusts SearchWorker to discover
-        competitors from the query itself rather than fabricating fake names."""
-        return []
+    def _seed_competitors(self, target: str, query: str = "") -> list[CompetitorCandidate]:
+        """Return user-named competitors extracted from the query.
+
+        When the user writes e.g. "分析 Notion、Coda 的竞品格局", the heuristic
+        extracts the target (Notion) and returns the remaining names (Coda) as
+        seed competitors.  Dimension keywords (pricing, market, technology, ...)
+        are filtered out.
+        """
+        competitors = self._extract_explicit_competitors(target, query)
+
+        # If the query mentions a competitor via "vs X" / "与 X 对比"
+        explicit_mention = re.search(
+            r"(?:与|和|vs\.?|versus|against|compete[sd]?\s+(?:with|against))\s*([A-Z][A-Za-z0-9_\-.]+)",
+            query, flags=re.IGNORECASE,
+        )
+        if explicit_mention:
+            name = explicit_mention.group(1).strip()
+            existing_names = {candidate[0] for candidate in competitors}
+            if name != target and name not in existing_names and _is_plausible_competitor(name):
+                competitors.append((name, None, "explicit"))
+
+        if not competitors:
+            competitors.extend(self._known_seed_competitors(target))
+
+        return [
+            CompetitorCandidate(
+                name=name,
+                website=website,
+                rationale="用户明确输入" if source == "explicit" else "启发式种子竞品",
+            )
+            for name, website, source in competitors
+        ]
+
+    def _extract_explicit_competitors(self, target: str, query: str) -> list[tuple[str, str | None, str]]:
+        names: list[tuple[str, str | None, str]] = []
+        if "、" not in query and "," not in query and "，" not in query:
+            return names
+
+        target_index = query.lower().find(target.lower())
+        if target_index == -1:
+            return names
+        tail = query[target_index + len(target):]
+        tail = re.split(r"(?:的竞品|竞争格局|在|市场|行业|赛道)", tail, maxsplit=1)[0]
+        for name in _split_names(tail):
+            clean = name.strip(" ：:，,。.、 ")
+            if clean and clean != target and _is_plausible_competitor(clean):
+                names.append((clean, None, "explicit"))
+        return names
+
+    def _known_seed_competitors(self, target: str) -> list[tuple[str, str | None, str]]:
+        seeds = _KNOWN_COMPETITOR_SEEDS.get(target.lower(), [])
+        return [(name, website, "seed") for name, website in seeds]
 
     def _build_questions(self, target: str, query: str = "") -> list[str]:
         """Generate broader search questions when LLM is unavailable.

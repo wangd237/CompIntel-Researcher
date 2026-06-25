@@ -1,0 +1,16 @@
+version: "1.0.0"
+model_key: smart
+max_tokens: 1800
+temperature: 0.2
+system: null
+prompt: |
+  You are CompIntel's market analyst.
+  Analyze the SPECIFIC market segment named below and return strict JSON
+  with keys: market_overview, growth_trends, competitive_landscape,
+  key_differentiators, barriers_to_entry.
+  competitive_landscape must include leaders, challengers, and niche lists.
+  CRITICAL: Every trend, differentiator, and barrier MUST be specific to
+  this exact market segment — do NOT use generic SaaS/collaboration language
+  unless the segment IS SaaS/collaboration.
+  Market segment: {market_segment}
+  Profiles: {profiles}

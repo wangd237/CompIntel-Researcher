@@ -19,6 +19,70 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
 ]
 
+# P1-2: Industry-specific review/comparison sites.
+# Keys are Chinese/English market segment keywords (matched case-insensitive).
+# Values are lists of URL templates where {query} is replaced by the URL-encoded
+# competitor name.
+_INDUSTRY_SCRAPE_SOURCES: dict[str, list[str]] = {
+    # Automotive / NEV
+    "汽车": [
+        "https://www.autohome.com.cn/search?q={query}",
+        "https://www.dongchedi.com/search?keyword={query}",
+    ],
+    "新能源": [
+        "https://www.autohome.com.cn/search?q={query}",
+        "https://www.dongchedi.com/search?keyword={query}",
+    ],
+    "nev": [
+        "https://insideevs.com/search/{query}/",
+        "https://cleantechnica.com/?s={query}",
+    ],
+    "ev": [
+        "https://insideevs.com/search/{query}/",
+    ],
+    "automotive": [
+        "https://www.caranddriver.com/search/?q={query}",
+    ],
+    # Software / SaaS (keep existing G2/Capterra as primary)
+    "saas": [
+        "https://www.g2.com/search?query={query}",
+        "https://www.capterra.com/search/?query={query}",
+    ],
+    "软件": [
+        "https://www.g2.com/search?query={query}",
+        "https://www.capterra.com/search/?query={query}",
+    ],
+    "collaboration": [
+        "https://www.g2.com/search?query={query}",
+        "https://www.capterra.com/search/?query={query}",
+    ],
+    # Finance / investment
+    "投资": [
+        "https://www.google.com/search?q={query}+investment+portfolio",
+        "https://crunchbase.com/organization/{query}",
+    ],
+    "investment": [
+        "https://crunchbase.com/organization/{query}",
+    ],
+    # General fallback — search engine
+    "_default": [
+        "https://www.g2.com/search?query={query}",
+        "https://www.capterra.com/search/?query={query}",
+    ],
+}
+
+def _resolve_industry_sources(market_segment: str) -> list[str]:
+    """Return scrape source URL templates that match *market_segment*."""
+    if not market_segment:
+        return _INDUSTRY_SCRAPE_SOURCES["_default"]
+    lowered = market_segment.lower()
+    for keyword, templates in _INDUSTRY_SCRAPE_SOURCES.items():
+        if keyword == "_default":
+            continue
+        if keyword.lower() in lowered:
+            return templates
+    return _INDUSTRY_SCRAPE_SOURCES["_default"]
+
 
 class BeautifulSoupScraper:
     def scrape(self, url: str, user_agent: str, timeout: float = 20) -> dict[str, Any]:
@@ -58,11 +122,13 @@ class ScrapeWorker(BaseCompIntelAgent):
 
     async def __call__(self, state: Any) -> dict[str, Any]:
         competitor = {}
+        market_segment = ""
         if isinstance(state, dict):
             competitor = state.get("competitor") or {}
+            market_segment = str(state.get("market_segment", ""))
 
         name = competitor.get("name", "unknown")
-        urls = self._build_target_urls(name, competitor.get("website"))
+        urls = self._build_target_urls(name, competitor.get("website"), market_segment)
         semaphore = asyncio.Semaphore(self.max_concurrency)
         scraped = await asyncio.gather(
             *(self._scrape_one(url, semaphore) for url in urls)
@@ -79,8 +145,9 @@ class ScrapeWorker(BaseCompIntelAgent):
             ],
         }
 
-    def _build_target_urls(self, name: str, website: str | None) -> list[str]:
+    def _build_target_urls(self, name: str, website: str | None, market_segment: str = "") -> list[str]:
         urls: list[str] = []
+        # Always scrape the competitor's own website
         if website:
             base_url = self._normalize_website(website)
             urls.extend(
@@ -91,13 +158,12 @@ class ScrapeWorker(BaseCompIntelAgent):
                 ]
             )
 
+        # P1-2: Industry-specific review/comparison sites
         query = quote_plus(name)
-        urls.extend(
-            [
-                f"https://www.g2.com/search?query={query}",
-                f"https://www.capterra.com/search/?query={query}",
-            ]
-        )
+        templates = _resolve_industry_sources(market_segment)
+        for template in templates:
+            urls.append(template.format(query=query))
+
         return self._dedupe_urls(urls)
 
     def _normalize_website(self, website: str) -> str:

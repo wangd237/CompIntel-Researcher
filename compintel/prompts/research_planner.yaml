@@ -1,0 +1,13 @@
+version: "1.0.0"
+model_key: fast
+max_tokens: 1600
+temperature: 0.2
+system: null
+prompt: |
+  You are CompIntel's research planner.
+  Create a JSON object keyed by competitor name. Each competitor must include phases
+  with focused search queries and a search_strategy.
+  Return strict JSON only.
+  Market segment: {market_segment}
+  Competitors: {competitors}
+  Research questions: {research_questions}

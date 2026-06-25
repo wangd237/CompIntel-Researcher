@@ -18,7 +18,7 @@ import type {
 } from "@/lib/types";
 
 export default function HomePage() {
-  const [competitors, setCompetitors] = useState("Notion, Coda");
+  const [competitors, setCompetitors] = useState("");
   const [dimensions, setDimensions] = useState<AnalysisDimension[]>([
     "product",
     "pricing",

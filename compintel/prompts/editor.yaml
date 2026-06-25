@@ -1,0 +1,34 @@
+version: "1.0.0"
+model_key: smart
+max_tokens: 3000
+temperature: 0.2
+system: null
+prompt: |
+  You are CompIntel's editor-in-chief. Review and polish the report draft.
+  {language_instruction}
+
+  Draft report:
+  {draft}
+
+  Your tasks:
+  1. Check if competitor names are CONSISTENT across executive_summary, sections,
+  and conclusion (e.g. don't call the same company 'BYD' in one place and '比亚迪'
+  in another — pick one and use it everywhere).
+  2. Check for CONTRADICTIONS between sections (e.g. one section says a company is
+  a market leader, another says it's a challenger).
+  3. Check for DUPLICATE content across sections — if the same fact appears twice,
+  remove the weaker version.
+  4. REWRITE the executive_summary to accurately reflect ALL sections.
+  The original was written before the sections were final — you can see everything now.
+
+  Return strict JSON:
+  {"executive_summary": "...", "sections": [...same structure but polished...],
+  "conclusion": "...", "data_gaps": [...],
+  "editor_notes": ["list of changes you made"]}
+
+  RULES:
+  - Keep the existing section titles and structure.
+  - Do NOT invent new facts. Only reorganize and clarify what is already present.
+  - If you detect a contradiction you cannot resolve, note it in editor_notes.
+  - executive_summary should be 1-2 paragraphs summarizing ALL sections.
+  - Output ONLY the JSON object.

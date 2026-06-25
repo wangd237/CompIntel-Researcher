@@ -18,6 +18,8 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 JSON_BLOCK_PATTERNS = (
     re.compile(r"```(?:json)?\s*(?P<payload>[\s\S]*?)```", re.IGNORECASE),
     re.compile(r"(?P<payload>\{[\s\S]*\})"),
+    # Also catch JSON arrays (e.g. DeepSeek sometimes wraps dicts in a list)
+    re.compile(r"(?P<payload>\[[\s\S]*\])"),
 )
 
 
@@ -74,6 +76,22 @@ def _repair_truncated_json(candidate: str) -> str:
     # 3. Fix missing comma: two string values on adjacent lines without comma
     candidate = re.sub(r'"\s*\n\s*"', r'",\n  "', candidate)
 
+    # 4. Fix missing comma between a closing brace/bracket and a following key/value
+    candidate = re.sub(r'([}\]"\d])\s*\n\s*"', r'\1,\n  "', candidate)
+
+    # 5. Fix trailing comma before closing brace or bracket
+    candidate = re.sub(r',\s*([}\]])', r'\1', candidate)
+
+    # 6. Close unclosed braces by appending missing } characters
+    brace_count = 0
+    for ch in candidate:
+        if ch == "{":
+            brace_count += 1
+        elif ch == "}":
+            brace_count -= 1
+    if brace_count > 0:
+        candidate = candidate.rstrip() + ("}" * brace_count)
+
     return candidate
 
 def load_repaired_json(text: str) -> Any:
@@ -86,7 +104,14 @@ def load_repaired_json(text: str) -> Any:
                 return json_repair.loads(candidate)
             return json.loads(candidate)
         except Exception:
-            logger.exception("Failed to parse JSON candidate")
+            preview = candidate[:180] if len(candidate) > 180 else candidate
+            tail = candidate[-80:] if len(candidate) > 180 else ""
+            logger.warning(
+                "Failed to parse JSON candidate (len=%d, preview=%r, tail=%r)",
+                len(candidate), preview, tail,
+            )
+            # Full candidate is available at DEBUG level for offline analysis
+            logger.debug("Full unparseable candidate:\n%s", candidate)
             continue
     return None
 

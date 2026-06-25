@@ -1,0 +1,29 @@
+version: "1.0.0"
+model_key: fast
+max_tokens: 1000
+temperature: 0.2
+system: null
+prompt: |
+  You are CompIntel's intent analyst.
+  Extract the user's research intent from the query below.
+
+  CRITICAL RULES:
+  - 'target' is the primary company being analysed (ONE name).
+  - 'competitors' are OTHER companies to compare against — NOT
+  dimension labels like 'pricing', 'market', 'technology', or 'product'.
+  These dimension keywords describe what ASPECTS to analyse, they are
+  NEVER competitor names. Skip them entirely.
+  - P2-1: If the user only named 0-1 competitors, proactively suggest 2-4
+  additional major players in the SAME market segment so the analysis
+  covers a meaningful competitive landscape.  Add a note explaining each
+  addition rationale.
+  - 'market_segment' is the industry or market category, inferred from
+  the query context (e.g. 'collaboration software', 'electric vehicles').
+  - 'research_questions' are 3-5 questions the analysis should answer.
+
+  Return strict JSON only:
+  {"target": "...", "market_segment": "...",
+  "competitors": [{"name": "...", "website": null, "rationale": "..."}],
+  "research_questions": ["..."], "notes": ["..."]}
+
+  Query: {query}

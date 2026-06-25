@@ -20,6 +20,7 @@ dependencies = [
     "tavily-python>=0.7,<1",
     "json-repair>=0.30,<1",
     "langgraph-checkpoint-sqlite>=2.0,<3",
+    "sentence-transformers>=2.7,<5",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +39,11 @@ all = [
     "uvicorn[standard]>=0.30,<1",
     "langgraph-checkpoint-sqlite>=2.0,<3",
     "pytest>=9,<10",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: slow integration test (skip during pre-commit)",
 ]
 
 [tool.setuptools.packages.find]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -20,10 +21,14 @@ class CompIntelSettings:
     llm_provider: str = "deepseek"
     fast_llm: str = "openai:deepseek-chat"
     smart_llm: str = "openai:deepseek-chat"
-    strategic_llm: str = "openai:deepseek-reasoner"
+    strategic_llm: str = "openai:deepseek-chat"
+    reasoning_llm: str = "openai:deepseek-reasoner"
+    formatting_llm: str = "openai:deepseek-chat"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
-    llm_timeout_seconds: float = 60.0
+    llm_timeout_seconds: float = 90.0
+    reasoning_max_tokens: int = 4000
+    formatting_max_tokens: int = 2000
     embedding_model: str = ""
     search_provider: str = "tavily"
     search_api_key: str | None = None
@@ -39,6 +44,7 @@ class CompIntelSettings:
         return self.llm_api_key
 
     @classmethod
+    @lru_cache(maxsize=1)
     def from_env(cls) -> "CompIntelSettings":
         values = _read_dotenv(Path(".env"))
         llm_provider = _setting(values, "LLM_PROVIDER", "deepseek").lower()
@@ -48,13 +54,17 @@ class CompIntelSettings:
             llm_provider=llm_provider,
             fast_llm=_normalize_model(_setting(values, "FAST_LLM", "deepseek-chat"), llm_provider),
             smart_llm=_normalize_model(_setting(values, "SMART_LLM", "deepseek-chat"), llm_provider),
-            strategic_llm=_normalize_model(_setting(values, "STRATEGIC_LLM", "deepseek-reasoner"), llm_provider),
+            strategic_llm=_normalize_model(_setting(values, "STRATEGIC_LLM", "deepseek-chat"), llm_provider),
+            reasoning_llm=_normalize_model(_setting(values, "REASONING_LLM", "deepseek-reasoner"), llm_provider),
+            formatting_llm=_normalize_model(_setting(values, "FORMATTING_LLM", "deepseek-chat"), llm_provider),
             llm_base_url=_setting(values, "LLM_BASE_URL", "") or _setting(values, "OPENAI_BASE_URL", "") or None,
             llm_api_key=_clean_secret(
                 _setting(values, "LLM_API_KEY", "")
                 or _setting(values, "OPENAI_API_KEY", "")
             ),
-            llm_timeout_seconds=_float_setting(values, "LLM_TIMEOUT_SECONDS", 30.0),
+            llm_timeout_seconds=_float_setting(values, "LLM_TIMEOUT_SECONDS", 90.0),
+            reasoning_max_tokens=int(_setting(values, "REASONING_MAX_TOKENS", "4000")),
+            formatting_max_tokens=int(_setting(values, "FORMATTING_MAX_TOKENS", "2000")),
             embedding_model=_setting(values, "EMBEDDING_MODEL", "").strip(),
             search_provider=search_provider,
             search_api_key=_clean_secret(
@@ -64,6 +74,11 @@ class CompIntelSettings:
             qdrant_path=_setting(values, "QDRANT_PATH", ""),
             report_store_path=_setting(values, "COMPINTEL_AUDIT_PATH", "outputs/compintel_audit.jsonl"),
         )
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Clear the cached settings so the next call re-reads environment."""
+        cls.from_env.cache_clear()
 
 
 def _setting(dotenv: dict[str, str], key: str, default: str) -> str:

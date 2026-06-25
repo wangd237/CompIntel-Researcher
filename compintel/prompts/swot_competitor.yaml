@@ -1,0 +1,27 @@
+version: "1.0.0"
+model_key: strategic
+reasoning_max_tokens: 2000
+formatting_max_tokens: 1200
+temperature: 0.2
+system: null
+prompt: |
+  You are CompIntel's SWOT analyst. Analyze ONE competitor: {name}.
+  Market context: {market_overview}
+  {grade_instruction}{curator_line}
+  Profile data:
+  {profile_data}
+
+  Return strict JSON:
+  {"name": "...",
+  "strengths": [{"text": "...", "evidence": "..."}],
+  "weaknesses": [{"text": "...", "evidence": "..."}],
+  "opportunities": [{"text": "...", "evidence": "..."}],
+  "threats": [{"text": "...", "evidence": "..."}]}
+
+  RULES:
+  - Each S/W quadrant MUST have 2-3 items. O/T at least 1 each.
+  - 'evidence' MUST cite a specific source URL, snippet text, or scraped content.
+  If NO evidence exists for a claim, do NOT output that claim at all.
+  - For THIN or EMPTY data profiles: honestly state 'data unavailable for this dimension'
+  rather than fabricating weakness/threat/opportunity claims.
+  - Output ONLY the JSON object, no markdown, no commentary.

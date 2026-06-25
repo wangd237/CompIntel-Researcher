@@ -56,8 +56,8 @@ export function CompIntelInput({
           <textarea
             value={competitors}
             onChange={(event) => onCompetitorsChange(event.target.value)}
-            className="min-h-28 w-full resize-none rounded-md border border-line bg-panel px-3 py-3 text-base outline-none transition focus:border-blue-500 focus:shadow-focus"
-            placeholder="Notion, Coda&#10;或逐行输入多个竞品名"
+            className="min-h-28 w-full resize-none rounded-md border border-line bg-panel px-3 py-3 text-base outline-none transition focus:border-blue-500 focus:shadow-focus placeholder:text-slate-400 placeholder:italic"
+            placeholder="输入竞品名称，如：Notion, Coda&#10;每行一个，或以逗号分隔"
           />
         </div>
 

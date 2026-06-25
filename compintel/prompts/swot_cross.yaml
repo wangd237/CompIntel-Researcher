@@ -1,0 +1,23 @@
+version: "1.0.0"
+model_key: strategic
+reasoning_max_tokens: 1500
+formatting_max_tokens: 800
+temperature: 0.2
+system: null
+prompt: |
+  You are CompIntel's SWOT aggregator. Given per-competitor SWOT summaries,
+  produce a cross-analysis and overall summary.
+  Market context: {market_overview}
+  Competitor SWOT summaries:
+  {competitor_summaries}
+
+  Return strict JSON:
+  {"summary": "...",
+  "cross_analysis": {"common_strengths": [{"text": "...", "evidence": "..."}],
+  "differentiators": [{"text": "...", "evidence": "..."}]}}
+
+  RULES:
+  - summary: 2-3 sentences synthesizing the competitive landscape.
+  - common_strengths: strengths shared by 2+ competitors.
+  - differentiators: unique strengths or weaknesses that set one competitor apart.
+  - Output ONLY the JSON object.

@@ -38,7 +38,16 @@ class RAGRetriever(BaseCompIntelAgent):
         query = f"{market_segment} {name}".strip() if market_segment else str(name)
 
         try:
-            rag_context = self.store.similarity_search(query, top_k=self.top_k)
+            # P1-1: first try with market_segment filter to avoid cross-domain pollution.
+            # Fall back to unfiltered search if no same-segment results exist.
+            if market_segment:
+                rag_context = self.store.similarity_search(
+                    query, top_k=self.top_k, filter_market_segment=market_segment,
+                )
+                if not rag_context:
+                    rag_context = self.store.similarity_search(query, top_k=self.top_k)
+            else:
+                rag_context = self.store.similarity_search(query, top_k=self.top_k)
         except Exception as exc:
             return {
                 "rag_context": [],

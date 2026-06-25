@@ -1,35 +1,28 @@
 """FastAPI surface for CompIntel Research."""
 
-from __future__ import annotations
+import json
 import logging
 
-import json
-
-logger = logging.getLogger(__name__)
-from typing import Any, TYPE_CHECKING
-
-if TYPE_CHECKING:  # pragma: no cover
-    from fastapi import FastAPI, WebSocket
-else:  # pragma: no cover
-    FastAPI = Any
-    WebSocket = Any
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .events import CompIntelEvent
 from .bundle import generate_delivery_bundle
 from .execution import CompIntelExecution
 from .schemas import CompIntelAnalyzeRequest, CompIntelAnalyzeResponse
 
+logger = logging.getLogger(__name__)
+
 
 def create_app() -> FastAPI:
-    try:
-        from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-    except ModuleNotFoundError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "FastAPI is not installed in the current environment."
-        ) from exc
 
     app = FastAPI(title="CompIntel Research", version="0.1.0")
-    execution = CompIntelExecution()
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -115,6 +108,7 @@ def create_app() -> FastAPI:
         except WebSocketDisconnect:
             return
 
+    execution = CompIntelExecution()
     return app
 
 

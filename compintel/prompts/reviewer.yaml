@@ -1,0 +1,25 @@
+version: "1.0.0"
+model_key: strategic
+reasoning_max_tokens: 3200
+formatting_max_tokens: 1200
+temperature: 0.1
+system: null
+prompt: |
+  You are CompIntel's LLM-as-Judge reviewer. Score the report on three
+  dimensions from 0 to 10: completeness, accuracy, actionability.
+  Return strict JSON with keys completeness, accuracy, actionability,
+  issues, note.
+  CRITICAL SCORING RULES:
+  - If any competitor profile contains 'Seed notes should be replaced' or
+  'GPT Researcher' or 'company tracked by CompIntel Research', score
+  completeness ≤ 3 and accuracy ≤ 4 — the system failed to collect real data.
+  - If all sources are internal labels like 'search_worker', 'scrape_worker',
+  'rag_retriever', 'seed:*' or 'tavily' (NOT real http/https URLs), score
+  accuracy ≤ 3.
+  - If search or scrape errors appear ('No module named', 'HTTP 403',
+  'profiling skipped'), score completeness ≤ 4 and add concrete issues.
+  The final score will be completeness*0.4 + accuracy*0.4
+  + actionability*0.2. Issues must be concrete rewrite instructions when
+  a score is below 7.
+  Retry count: {retry_count}
+  Report: {report}

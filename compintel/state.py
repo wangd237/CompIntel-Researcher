@@ -44,6 +44,8 @@ class CompIntelState(TypedDict, total=False):
     research_questions: list[str]
     research_plan: dict[str, Any]
     profiles: Annotated[list[dict[str, Any]], operator.add]
+    curated_profiles: list[dict[str, Any]]  # curator output — replaces profiles downstream
+    curator_evidence: dict[str, Any]  # evidence quality summary from curator
     competitor_profiles: Annotated[list[CompetitorProfile], operator.add]
     market_analysis: dict[str, Any]
     swot_analysis: dict[str, Any]

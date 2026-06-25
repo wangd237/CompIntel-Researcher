@@ -7,28 +7,25 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from ..llm import _split_provider_model
-from ..parsing import load_repaired_json, safe_json_dumps
-from ..settings import CompIntelSettings
+from ..parsing import safe_json_dumps
+from ..prompts import load_prompt
 from .base import BaseCompIntelAgent
 
 
 class MarketAnalystAgent(BaseCompIntelAgent):
     def __init__(self, model: str = "deepseek-chat", completion_fn: Any | None = None) -> None:
-        super().__init__(model=model)
+        super().__init__(model=model, model_key="smart")
         self.completion_fn = completion_fn
 
     async def __call__(self, state: Any) -> dict[str, Any]:
-        profiles = []
-        market_segment = "unknown"
-        if isinstance(state, dict):
-            profiles = state.get("profiles") or state.get("competitor_profiles") or []
-            market_segment = state.get("market_segment") or market_segment
+        s = self.read_state(state)
+        profiles = s.profiles
+        market_segment = s.market_segment
 
-        settings = CompIntelSettings.from_env()
-        market_analysis = await self._try_llm_analyze(profiles, market_segment, settings)
+        market_analysis = await self._try_llm_analyze(profiles, market_segment)
         source = "llm"
         if market_analysis is None:
+            settings = self.llm.settings
             if settings.llm_api_key:
                 market_analysis = self._derived_analysis(profiles, market_segment)
                 source = "derived"
@@ -36,30 +33,69 @@ class MarketAnalystAgent(BaseCompIntelAgent):
                 market_analysis = self._fallback_analysis(profiles, market_segment)
                 source = "template"
 
+        # ── self-audit (LLM path only; non-blocking) ──
+        audit_warnings: list[str] = []
+        if source == "llm":
+            audit_warnings = self._self_audit(market_analysis, profiles)
+
         return {
             "market_analysis": market_analysis,
             "execution_log": [
-                {"node": "market_analyst", "event": "completed", "detail": f"{source}: {market_segment}"}
+                {"node": "market_analyst", "event": "completed",
+                 "detail": f"{source}: {market_segment}"}
             ],
+            "warnings": audit_warnings,
         }
 
     async def _try_llm_analyze(
         self,
         profiles: list[dict[str, Any]],
         market_segment: str,
-        settings: CompIntelSettings,
     ) -> dict[str, Any] | None:
-        if not settings.llm_api_key and self.completion_fn is None:
+        if self.completion_fn is not None:
+            return await self._legacy_llm_analyze(profiles, market_segment)
+
+        compact_profiles = [
+            {
+                "name": profile.get("name"),
+                "summary": profile.get("summary"),
+                "sources": profile.get("sources", []),
+                "search_results": profile.get("search_results", [])[:2],
+                "rag_context": profile.get("rag_context", [])[:1],
+            }
+            for profile in profiles
+            if isinstance(profile, dict)
+        ]
+        prompt = load_prompt("market_analyst")
+        parsed = await self.llm.call_and_parse(
+            prompt.format(
+                market_segment=market_segment,
+                profiles=safe_json_dumps(compact_profiles),
+            ),
+            model_key=prompt.model_key,
+            max_tokens=prompt.max_tokens,
+            temperature=prompt.temperature,
+        )
+        if isinstance(parsed, dict):
+            return self._normalize_analysis(parsed)
+        return None
+
+    async def _legacy_llm_analyze(
+        self,
+        profiles: list[dict[str, Any]],
+        market_segment: str,
+    ) -> dict[str, Any] | None:
+        """Backward-compat path when a test-injected *completion_fn* is present."""
+        try:
+            from ..llm import create_chat_completion, _split_provider_model
+            from ..settings import CompIntelSettings
+        except Exception:
+            logger.exception("Failed to import legacy LLM deps")
             return None
 
-        completion_fn = self.completion_fn
-        if completion_fn is None:
-            try:
-                from ..llm import create_chat_completion
-            except Exception:
-                logger.exception("Failed to import create_chat_completion")
-                return None
-            completion_fn = create_chat_completion
+        settings = CompIntelSettings.from_env()
+        if not settings.llm_api_key:
+            return None
 
         provider, model = _split_provider_model(settings.smart_llm)
         compact_profiles = [
@@ -75,15 +111,18 @@ class MarketAnalystAgent(BaseCompIntelAgent):
         ]
         prompt = (
             "You are CompIntel's market analyst.\n"
-            "Analyze the market from competitor profiles and return strict JSON with keys: "
-            "market_overview, growth_trends, competitive_landscape, key_differentiators, "
-            "barriers_to_entry.\n"
+            "Analyze the SPECIFIC market segment named below and return strict JSON "
+            "with keys: market_overview, growth_trends, competitive_landscape, "
+            "key_differentiators, barriers_to_entry.\n"
             "competitive_landscape must include leaders, challengers, and niche lists.\n"
+            "CRITICAL: Every trend, differentiator, and barrier MUST be specific to "
+            "this exact market segment — do NOT use generic SaaS/collaboration language "
+            "unless the segment IS SaaS/collaboration.\n"
             f"Market segment: {market_segment}\n"
             f"Profiles: {safe_json_dumps(compact_profiles)}\n"
         )
         try:
-            raw = await completion_fn(
+            raw = await self.completion_fn(
                 messages=[{"role": "user", "content": prompt}],
                 model=model,
                 llm_provider=provider,
@@ -91,11 +130,12 @@ class MarketAnalystAgent(BaseCompIntelAgent):
                 temperature=0.2,
             )
         except TypeError:
-            raw = await completion_fn(prompt)
-        except Exception:
-            logger.exception("LLM call failed, returning None")
+            raw = await self.completion_fn(prompt)
+        except Exception as exc:
+            logger.warning("Market analyst LLM call failed; using derived analysis: %s", exc)
             return None
 
+        from ..parsing import load_repaired_json
         parsed = load_repaired_json(str(raw))
         if isinstance(parsed, dict):
             return self._normalize_analysis(parsed)
@@ -127,19 +167,82 @@ class MarketAnalystAgent(BaseCompIntelAgent):
             return result
         return []
 
+    @staticmethod
+    def _clean_artifact(val: str) -> str:
+        """P2-3: Strip JSON artifact suffixes (``}}``, ``}``, ``]``) that LLM
+        output sometimes trails at the end of string values when the response is
+        truncated or repaired."""
+        cleaned = val.strip()
+        while cleaned.endswith(("}}", "} ]", "}]", "}", "]")):
+            if cleaned.endswith("}}"):
+                cleaned = cleaned[:-2].rstrip()
+            elif cleaned.endswith("}]"):
+                cleaned = cleaned[:-2].rstrip()
+            elif cleaned.endswith("} ]"):
+                cleaned = cleaned[:-3].rstrip()
+            else:
+                cleaned = cleaned[:-1].rstrip()
+        return cleaned
+
     def _normalize_analysis(self, payload: dict[str, Any]) -> dict[str, Any]:
         landscape = payload.get("competitive_landscape") or {}
         return {
-            "market_overview": str(payload.get("market_overview", "")),
-            "growth_trends": self._normalize_list_field(payload.get("growth_trends", [])),
+            "market_overview": self._clean_artifact(str(payload.get("market_overview", ""))),
+            "growth_trends": [self._clean_artifact(s) for s in self._normalize_list_field(payload.get("growth_trends", []))],
             "competitive_landscape": {
-                "leaders": self._normalize_list_of_strings(landscape.get("leaders", landscape.get("market_leaders", []))),
-                "challengers": self._normalize_list_of_strings(landscape.get("challengers", [])),
-                "niche": self._normalize_list_of_strings(landscape.get("niche", landscape.get("niche_players", []))),
+                "leaders": [self._clean_artifact(s) for s in self._normalize_list_of_strings(landscape.get("leaders", landscape.get("market_leaders", [])))],
+                "challengers": [self._clean_artifact(s) for s in self._normalize_list_of_strings(landscape.get("challengers", []))],
+                "niche": [self._clean_artifact(s) for s in self._normalize_list_of_strings(landscape.get("niche", landscape.get("niche_players", [])))],
             },
-            "key_differentiators": self._normalize_list_field(payload.get("key_differentiators", [])),
-            "barriers_to_entry": self._normalize_list_field(payload.get("barriers_to_entry", [])),
+            "key_differentiators": [self._clean_artifact(s) for s in self._normalize_list_field(payload.get("key_differentiators", []))],
+            "barriers_to_entry": [self._clean_artifact(s) for s in self._normalize_list_field(payload.get("barriers_to_entry", []))],
         }
+
+    # ── self-audit ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _self_audit(
+        analysis: dict[str, Any], profiles: list[dict[str, Any]]
+    ) -> list[str]:
+        """Validate LLM-generated market analysis against input profiles.
+
+        Pure set operations — no LLM call, < 1 ms.  Returns a list of
+        warning strings (empty when clean).
+        """
+        warnings: list[str] = []
+        profile_names = {
+            str(p.get("name", "")).strip()
+            for p in profiles if isinstance(p, dict) and str(p.get("name", "")).strip()
+        }
+        if not profile_names:
+            return warnings
+
+        landscape = analysis.get("competitive_landscape", {})
+        leaders = set(landscape.get("leaders", []))
+        challengers = set(landscape.get("challengers", []))
+        niche = set(landscape.get("niche", []))
+
+        all_mentioned = leaders | challengers | niche
+        if not all_mentioned:
+            return warnings
+
+        # 1. Phantom companies: names the LLM invented that are NOT in profiles
+        unknown = all_mentioned - profile_names
+        if unknown:
+            warnings.append(
+                f"Market analysis references {len(unknown)} company name(s) not in "
+                f"input profiles: {sorted(unknown)}. These may be LLM hallucinations."
+            )
+
+        # 2. Duplicate classification: same company in >1 bucket
+        dupes = (leaders & challengers) | (leaders & niche) | (challengers & niche)
+        if dupes:
+            warnings.append(
+                f"Companies appear in multiple landscape categories: "
+                f"{sorted(dupes)}. Each company should be in exactly one bucket."
+            )
+
+        return warnings
 
     def _fallback_analysis(self, profiles: list[dict[str, Any]], market_segment: str) -> dict[str, Any]:
         return {
@@ -162,27 +265,33 @@ class MarketAnalystAgent(BaseCompIntelAgent):
             str(profile.get("summary", "")).strip()
             for profile in profiles
             if isinstance(profile, dict) and str(profile.get("summary", "")).strip()
+            and not str(profile.get("summary", "")).startswith("Profile summary for")
         ]
         segment = market_segment or "target market"
         trends = self._extract_trends_from_snippets(profiles)
+        overview_parts = [f"{segment} includes {', '.join(names) if names else 'the profiled competitors'}."]
+        if summaries:
+            overview_parts.append(f"Key themes from profiles: {'; '.join(summaries[:3])}.")
+        else:
+            overview_parts.append(
+                "Profile data was insufficient for a detailed market overview. "
+                "Consider re-running with LLM enabled or broadening the search scope."
+            )
         return {
-            "market_overview": (
-                f"{segment} includes {', '.join(names) if names else 'the profiled competitors'}; "
-                f"available evidence emphasizes product positioning, distribution, and collaboration workflows."
-            ),
+            "market_overview": " ".join(overview_parts),
             "growth_trends": trends or [
-                "AI-assisted workflows and knowledge management",
-                "Integrated collaboration across documents, databases, and team communication",
+                "Insufficient search data to extract market trends — consider enabling LLM analysis.",
             ],
             "competitive_landscape": {
                 "leaders": names[:2],
                 "challengers": names[2:4],
                 "niche": names[4:],
             },
-            "key_differentiators": summaries[:3] or ["Product scope, ecosystem integrations, and workflow depth"],
+            "key_differentiators": summaries[:3] or [
+                "Insufficient profile data to determine key differentiators.",
+            ],
             "barriers_to_entry": [
-                "Enterprise switching costs",
-                "Trust, security, and integration requirements",
+                "Insufficient data to determine barriers to entry.",
             ],
         }
 

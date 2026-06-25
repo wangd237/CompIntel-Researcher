@@ -7,9 +7,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from ..llm import _split_provider_model
-from ..parsing import load_repaired_json, safe_json_dumps
-from ..settings import CompIntelSettings
+from ..parsing import safe_json_dumps
+from ..prompts import load_prompt
 from .base import BaseCompIntelAgent
 
 
@@ -17,20 +16,16 @@ class ResearchPlannerAgent(BaseCompIntelAgent):
     """Create a structured plan for each competitor."""
 
     def __init__(self, model: str = "deepseek-chat", completion_fn: Any | None = None) -> None:
-        super().__init__(model=model)
+        super().__init__(model=model, model_key="fast")
         self.completion_fn = completion_fn
 
     async def __call__(self, state: Any) -> dict[str, Any]:
-        competitors = []
-        questions: list[str] = []
-        market_segment = "unknown"
-        if isinstance(state, dict):
-            competitors = state.get("competitors") or []
-            questions = state.get("research_questions") or []
-            market_segment = state.get("market_segment") or (state.get("intent") or {}).get("market_segment") or market_segment
+        s = self.read_state(state)
+        competitors = s.competitors
+        questions = s.research_questions
+        market_segment = s.market_segment
 
-        settings = CompIntelSettings.from_env()
-        llm_plan = await self._try_llm_plan(competitors, questions, market_segment, settings)
+        llm_plan = await self._try_llm_plan(competitors, questions, market_segment)
         if llm_plan:
             return {
                 "research_plan": llm_plan,
@@ -52,19 +47,43 @@ class ResearchPlannerAgent(BaseCompIntelAgent):
         competitors: list[dict[str, Any]],
         questions: list[str],
         market_segment: str,
-        settings: CompIntelSettings,
     ) -> dict[str, Any] | None:
-        if not settings.llm_api_key and self.completion_fn is None:
+        if self.completion_fn is not None:
+            return await self._legacy_llm_plan(competitors, questions, market_segment)
+
+        prompt = load_prompt("research_planner")
+        result = await self.llm.call_and_parse(
+            prompt.format(
+                market_segment=market_segment,
+                competitors=safe_json_dumps(competitors),
+                research_questions=safe_json_dumps(questions),
+            ),
+            model_key=prompt.model_key,
+            max_tokens=prompt.max_tokens,
+            temperature=prompt.temperature,
+        )
+        if isinstance(result, dict):
+            return result
+        logger.warning("Research planner LLM call failed; using template plan")
+        return None
+
+    async def _legacy_llm_plan(
+        self,
+        competitors: list[dict[str, Any]],
+        questions: list[str],
+        market_segment: str,
+    ) -> dict[str, Any] | None:
+        """Backward-compat path when a test-injected *completion_fn* is present."""
+        try:
+            from ..llm import create_chat_completion, _split_provider_model
+            from ..settings import CompIntelSettings
+        except Exception:
+            logger.exception("Failed to import legacy LLM deps")
             return None
 
-        completion_fn = self.completion_fn
-        if completion_fn is None:
-            try:
-                from ..llm import create_chat_completion
-            except Exception:
-                logger.exception("Failed to import create_chat_completion")
-                return None
-            completion_fn = create_chat_completion
+        settings = CompIntelSettings.from_env()
+        if not settings.llm_api_key:
+            return None
 
         provider, model = _split_provider_model(settings.fast_llm)
         prompt = (
@@ -77,7 +96,7 @@ class ResearchPlannerAgent(BaseCompIntelAgent):
             f"Research questions: {safe_json_dumps(questions)}\n"
         )
         try:
-            raw = await completion_fn(
+            raw = await self.completion_fn(
                 messages=[{"role": "user", "content": prompt}],
                 model=model,
                 llm_provider=provider,
@@ -85,11 +104,12 @@ class ResearchPlannerAgent(BaseCompIntelAgent):
                 temperature=0.2,
             )
         except TypeError:
-            raw = await completion_fn(prompt)
-        except Exception:
-            logger.exception("LLM call failed, returning None")
+            raw = await self.completion_fn(prompt)
+        except Exception as exc:
+            logger.warning("Research planner LLM call failed; using template plan: %s", exc)
             return None
 
+        from ..parsing import load_repaired_json
         parsed = load_repaired_json(str(raw))
         if isinstance(parsed, dict):
             return parsed

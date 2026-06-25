@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from .base import BaseCompIntelAgent
 from .rag_retriever import RAGRetriever
 from .scrape_worker import ScrapeWorker
 from .search_worker import SearchWorker
+
+logger = logging.getLogger(__name__)
 
 
 class CompetitorProfilerAgent(BaseCompIntelAgent):
@@ -20,15 +23,25 @@ class CompetitorProfilerAgent(BaseCompIntelAgent):
         self.rag_retriever = RAGRetriever(model=model)
 
     async def __call__(self, state: Any) -> dict[str, Any]:
-        competitor = {}
-        research_questions: list[str] = []
-        if isinstance(state, dict):
-            competitor = state.get("competitor") or {}
-            research_questions = state.get("research_questions") or []
+        s = self.read_state(state)
+        competitor = s.competitor
+        research_questions = s.research_questions
 
-        search = await self.search_worker({"competitor": competitor, "research_questions": research_questions})
-        scrape = await self.scrape_worker({"competitor": competitor})
-        rag = await self.rag_retriever({"competitor": competitor})
+        try:
+            search = await self.search_worker({"competitor": competitor, "research_questions": research_questions})
+        except Exception as exc:
+            logger.warning("Search worker failed for %s: %s", competitor.get("name"), exc)
+            search = {}
+        try:
+            scrape = await self.scrape_worker({"competitor": competitor})
+        except Exception as exc:
+            logger.warning("Scrape worker failed for %s: %s", competitor.get("name"), exc)
+            scrape = {}
+        try:
+            rag = await self.rag_retriever({"competitor": competitor})
+        except Exception as exc:
+            logger.warning("RAG retriever failed for %s: %s", competitor.get("name"), exc)
+            rag = {}
 
         profile = {
             "name": competitor.get("name", "unknown"),

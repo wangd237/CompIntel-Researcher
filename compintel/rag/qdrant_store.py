@@ -6,11 +6,24 @@ import hashlib
 import logging
 import math
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    Fusion,
+    FusionQuery,
+    MatchValue,
+    PointStruct,
+    Prefetch,
+    SparseVector,
+    SparseVectorParams,
+    VectorParams,
+)
 
 from .base import Embedder, RagDocument
 
@@ -65,12 +78,141 @@ class SentenceTransformerEmbedder:
             return
         try:
             from sentence_transformers import SentenceTransformer
-        except ModuleNotFoundError:
-            raise RuntimeError(
-                "sentence-transformers is not installed. "
-                "Install it with: pip install sentence-transformers"
-            ) from None
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("sentence-transformers is not installed") from exc
         self._model = SentenceTransformer(self.model_name, device=self.device)
+
+
+_CJK_RE = re.compile(r"[一-鿿]")
+_ASCII_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+class BM25SparseEmbedder:
+    """Lightweight BM25 sparse embedder with zero external dependencies.
+
+    Produces sparse vectors in the ``(indices, values)`` format that Qdrant
+    accepts for hybrid dense + sparse search.  The vocabulary is built
+    incrementally during :meth:`encode_document` calls, and document
+    frequency statistics are updated so that :meth:`encode_query` can apply
+    IDF weighting.
+
+    Parameters
+    ----------
+    k1: float
+        BM25 term-frequency saturation parameter (default 1.5).
+    b: float
+        BM25 length-normalisation parameter (default 0.75).
+
+    Notes
+    -----
+    IDF values for previously ingested documents become slightly stale as
+    new documents are added, but the sparse path's primary job is catching
+    **exact term matches** (precise company names, rare keywords).  A
+    marginally stale IDF does not prevent a match from producing a non-zero
+    similarity score, and RRF fusion handles score calibration.
+    """
+
+    def __init__(self, k1: float = 1.5, b: float = 0.75) -> None:
+        self.k1 = k1
+        self.b = b
+        self._vocab: dict[str, int] = {}   # token → index
+        self._df: dict[int, int] = {}      # index → document frequency
+        self._N: int = 0                    # total documents seen
+        self._total_length: int = 0         # sum of all document lengths
+
+    # ── public API ─────────────────────────────────────────────────
+
+    def encode_document(self, text: str) -> SparseVector:
+        """Encode a single document chunk as a sparse TF vector.
+
+        This method *also* updates the vocabulary and document-frequency
+        statistics, so it must be called for every chunk that is ingested.
+        """
+        tokens = self._tokenize(text)
+        if not tokens:
+            return SparseVector(indices=[], values=[])
+
+        # Update corpus statistics
+        self._N += 1
+        self._total_length += len(tokens)
+        for token in set(tokens):
+            idx = self._get_index(token)
+            self._df[idx] = self._df.get(idx, 0) + 1
+
+        # Compute log-scaled term frequencies
+        tf: dict[int, float] = {}
+        for token in tokens:
+            idx = self._vocab[token]
+            tf[idx] = tf.get(idx, 0.0) + 1.0
+
+        indices: list[int] = []
+        values: list[float] = []
+        for idx, freq in tf.items():
+            indices.append(idx)
+            values.append(1.0 + math.log(freq))  # sublinear tf
+
+        return SparseVector(indices=indices, values=values)
+
+    def encode_query(self, query: str) -> SparseVector:
+        """Encode a query with IDF-weighted term presence."""
+        tokens = self._tokenize(query)
+        if not tokens:
+            return SparseVector(indices=[], values=[])
+
+        avgdl = self._total_length / max(1, self._N)
+        indices: list[int] = []
+        values: list[float] = []
+
+        seen: set[int] = set()
+        for token in tokens:
+            idx = self._vocab.get(token)
+            if idx is None or idx in seen:
+                continue
+            seen.add(idx)
+            df = self._df.get(idx, 1)
+            idf = math.log((self._N - df + 0.5) / (df + 0.5) + 1.0)
+            indices.append(idx)
+            values.append(idf)
+
+        return SparseVector(indices=indices, values=values)
+
+    # ── helpers ────────────────────────────────────────────────────
+
+    def _get_index(self, token: str) -> int:
+        if token not in self._vocab:
+            self._vocab[token] = len(self._vocab)
+        return self._vocab[token]
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        """Tokenize text into a mix of CJK bigrams and ASCII word tokens."""
+        text = text.lower().strip()
+        if not text:
+            return []
+
+        tokens: list[str] = []
+        # Extract CJK characters and ASCII word runs
+        parts: list[tuple[bool, str]] = []  # (is_cjk, text)
+        for ch in text:
+            is_cjk = bool(_CJK_RE.match(ch))
+            if parts and parts[-1][0] == is_cjk:
+                parts[-1] = (is_cjk, parts[-1][1] + ch)
+            else:
+                parts.append((is_cjk, ch))
+
+        for is_cjk, segment in parts:
+            if is_cjk:
+                # Bigram for CJK (單字 as fallback when only 1 char)
+                for i in range(len(segment)):
+                    tokens.append(segment[i])  # unigram
+                for i in range(len(segment) - 1):
+                    tokens.append(segment[i : i + 2])  # bigram
+            else:
+                for token in _ASCII_TOKEN_RE.findall(segment):
+                    if len(token) >= 2:
+                        tokens.append(token)
+
+        return tokens
 
 
 def _resolve_embedder(explicit: Embedder | None = None) -> Embedder:
@@ -81,8 +223,9 @@ def _resolve_embedder(explicit: Embedder | None = None) -> Embedder:
     settings = CompIntelSettings.from_env()
     model_name = settings.embedding_model.strip()
     if model_name:
-        logger.info("Loading embedding model: %s", model_name)
-        return SentenceTransformerEmbedder(model_name=model_name)
+        embedder = SentenceTransformerEmbedder(model_name=model_name)
+        logger.info("Using embedding model: %s", model_name)
+        return embedder
 
     return HashEmbedder()
 
@@ -92,6 +235,7 @@ class QdrantStore:
     collection_name: str = "compintel_reports"
     client: QdrantClient | None = None
     embedder: Embedder = field(default_factory=_resolve_embedder)
+    sparse_embedder: BM25SparseEmbedder = field(default_factory=BM25SparseEmbedder)
     location: str = ":memory:"
     chunk_size: int = 900
     chunk_overlap: int = 120
@@ -126,10 +270,15 @@ class QdrantStore:
             return
         self.client.create_collection(
             collection_name=self.collection_name,
-            vectors_config=VectorParams(
-                size=self.embedder.dimensions,
-                distance=Distance.COSINE,
-            ),
+            vectors_config={
+                "dense": VectorParams(
+                    size=self.embedder.dimensions,
+                    distance=Distance.COSINE,
+                ),
+            },
+            sparse_vectors_config={
+                "sparse": SparseVectorParams(),
+            },
         )
 
     def ingest(self, documents: Iterable[RagDocument | dict[str, Any]], batch_size: int = 100) -> int:
@@ -149,7 +298,10 @@ class QdrantStore:
                 points.append(
                     PointStruct(
                         id=point_id,
-                        vector=self.embedder.embed(chunk),
+                        vector={
+                            "dense": self.embedder.embed(chunk),
+                            "sparse": self.sparse_embedder.encode_document(chunk),
+                        },
                         payload=payload,
                     )
                 )
@@ -163,12 +315,53 @@ class QdrantStore:
             total += len(points)
         return total
 
-    def similarity_search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    def similarity_search(
+        self,
+        query: str,
+        top_k: int = 5,
+        filter_market_segment: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Hybrid search with BM25 sparse + Dense semantic vectors fused via RRF.
+
+        Qdrant runs both retrieval paths in parallel, then merges the two
+        result lists with Reciprocal Rank Fusion so that documents matching
+        both the exact keywords (BM25) and the semantic intent (Dense) are
+        ranked highest.
+        """
         self.ensure_collection()
         assert self.client is not None
+
+        query_filter: Filter | None = None
+        if filter_market_segment:
+            query_filter = Filter(
+                must=[
+                    FieldCondition(
+                        key="market_segment",
+                        match=MatchValue(value=filter_market_segment),
+                    )
+                ]
+            )
+
+        dense_vector = self.embedder.embed(query)
+        sparse_vector = self.sparse_embedder.encode_query(query)
+
         response = self.client.query_points(
             collection_name=self.collection_name,
-            query=self.embedder.embed(query),
+            prefetch=[
+                Prefetch(
+                    query=dense_vector,
+                    using="dense",
+                    limit=max(top_k * 4, 20),
+                    filter=query_filter,
+                ),
+                Prefetch(
+                    query=sparse_vector,
+                    using="sparse",
+                    limit=max(top_k * 4, 20),
+                    filter=query_filter,
+                ),
+            ],
+            query=FusionQuery(fusion=Fusion.RRF),
             limit=top_k,
             with_payload=True,
         )
