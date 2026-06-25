@@ -473,9 +473,33 @@ class LLMService:
                 await asyncio.sleep(1)
 
         logger.error(
-            "Formatter failed after %d attempts (last_error=%s)",
+            "Formatter failed after %d attempts (last_error=%s) — "
+            "falling back to direct call without reasoning context",
             max_attempts, last_error,
         )
+
+        # ── Fallback: direct single-model call without reasoning context ─
+        # The reasoner produced useful analysis, but the formatter (even with
+        # compressed reasoning) couldn't convert it to structured JSON.  This
+        # happens when the formatting model itself enters a reasoning loop
+        # (some DeepSeek chat models now emit reasoning_content).
+        #
+        # Fall back to a simple call_and_parse with the original prompt —
+        # the reasoning is discarded, but we still get LLM-quality output
+        # instead of degrading all the way to derived/template.
+        try:
+            fallback = await self.call_and_parse(
+                prompt=prompt,
+                model_key=formatting_model_key,
+                max_tokens=formatting_max_tokens,
+                temperature=0.0,
+            )
+            if isinstance(fallback, dict):
+                logger.info("Formatter fallback succeeded — using direct LLM output")
+                return fallback
+        except Exception as fb_exc:
+            logger.warning("Formatter fallback also failed: %s", str(fb_exc)[:200])
+
         return None
 
     # ── internals ───────────────────────────────────────────────────────
