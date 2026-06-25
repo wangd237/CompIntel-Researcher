@@ -82,23 +82,26 @@ class EditorAgent(BaseCompIntelAgent):
             else "Output in English."
         )
 
-        prompt = load_prompt("editor")
-        parsed = await self.llm.call_and_parse(
-            prompt.format(
-                language_instruction=lang_instr,
-                draft=safe_json_dumps(compact),
-            ),
-            model_key=prompt.model_key,
-            max_tokens=prompt.max_tokens,
-            temperature=prompt.temperature,
-        )
-        if isinstance(parsed, dict):
-            result = dict(report)  # preserve unmentioned fields
-            result["executive_summary"] = parsed.get("executive_summary", report.get("executive_summary", ""))
-            result["conclusion"] = parsed.get("conclusion", report.get("conclusion", ""))
-            result["data_gaps"] = parsed.get("data_gaps", report.get("data_gaps", []))
-            if parsed.get("sections"):
-                result["sections"] = parsed["sections"]
-            result["editor_notes"] = parsed.get("editor_notes", [])
-            return result
+        try:
+            prompt = load_prompt("editor")
+            parsed = await self.llm.call_and_parse(
+                prompt.format(
+                    language_instruction=lang_instr,
+                    draft=safe_json_dumps(compact),
+                ),
+                model_key=prompt.model_key,
+                max_tokens=prompt.max_tokens,
+                temperature=prompt.temperature,
+            )
+            if isinstance(parsed, dict):
+                result = dict(report)  # preserve unmentioned fields
+                result["executive_summary"] = parsed.get("executive_summary", report.get("executive_summary", ""))
+                result["conclusion"] = parsed.get("conclusion", report.get("conclusion", ""))
+                result["data_gaps"] = parsed.get("data_gaps", report.get("data_gaps", []))
+                if parsed.get("sections"):
+                    result["sections"] = parsed["sections"]
+                result["editor_notes"] = parsed.get("editor_notes", [])
+                return result
+        except Exception as exc:
+            logger.warning("Editor failed (non-fatal): %s — passing report through unchanged", str(exc)[:200])
         return None

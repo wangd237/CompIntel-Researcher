@@ -14,6 +14,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 from ..parsing import safe_json_dumps
+from ..prompts import load_prompt
 from .base import BaseCompIntelAgent
 
 # ── Rules-based junk filtering ────────────────────────────────────────────
@@ -48,9 +49,15 @@ def _is_relevant_url(url: str) -> bool:
 
 
 def _deduplicate_search_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove search results that are near-duplicates by URL domain+path."""
+    """Remove search results that are near-duplicates by full URL path.
+
+    Uses the complete URL (minus trailing slash and query string) as the
+    dedup key — not just the domain.  This preserves multiple distinct
+    pages from the same review site (e.g. G2, Capterra) where every
+    result shares a domain but points to a different competitor page.
+    """
     deduped: list[dict[str, Any]] = []
-    seen_domains: set[str] = set()
+    seen_urls: set[str] = set()
     for item in results:
         if not isinstance(item, dict):
             continue
@@ -58,10 +65,12 @@ def _deduplicate_search_results(results: list[dict[str, Any]]) -> list[dict[str,
         if not url:
             deduped.append(item)
             continue
-        # Extract domain as dedup key
-        domain = url.split("/")[2] if url.startswith("http") and "/" in url[6:] else url
-        if domain not in seen_domains:
-            seen_domains.add(domain)
+        # Normalize: strip trailing slash + query/fragment for dedup key
+        dedup_key = url.rstrip("/").lower()
+        if "?" in dedup_key:
+            dedup_key = dedup_key.split("?")[0]
+        if dedup_key not in seen_urls:
+            seen_urls.add(dedup_key)
             deduped.append(item)
     return deduped
 
@@ -200,11 +209,13 @@ class CuratorAgent(BaseCompIntelAgent):
         total = evidence["total"]
         search = evidence["search"]
         scrape = evidence["scrape"]
-        if search >= 2 and scrape >= 1:
+        rag = evidence["rag"]
+        # Rich: at least two channels with substantial data
+        if total >= 4 and (search >= 2 or scrape >= 2 or rag >= 1):
             return "rich"
-        if search >= 1 and total >= 2:
+        if total >= 2:
             return "adequate"
-        if search >= 1:
+        if total >= 1:
             return "thin"
         return "empty"
 
@@ -254,17 +265,18 @@ class CuratorAgent(BaseCompIntelAgent):
         if not snippets:
             return None
 
-        prompt = (
-            f"Analyze the quality of collected data for competitor '{name}' "
-            f"in market '{market_segment}'. Given these search result snippets:\n"
-            f"{chr(10).join(snippets)}\n\n"
-            "Answer in ONE sentence (中文 or English matching the data language): "
-            "what does this data cover well? What critical information is MISSING "
-            "(especially regarding weaknesses, threats, financial data, user complaints)? "
-            "Return ONLY the one-sentence answer, no JSON."
-        )
+        prompt = load_prompt("curator")
         try:
-            raw = await self.llm.call(prompt, model_key="fast", max_tokens=150, temperature=0.1)
+            raw = await self.llm.call(
+                prompt.format(
+                    name=name,
+                    market_segment=market_segment,
+                    snippets="\n".join(snippets),
+                ),
+                model_key=prompt.model_key,
+                max_tokens=prompt.max_tokens,
+                temperature=prompt.temperature,
+            )
             return str(raw).strip()
         except Exception:
             return None

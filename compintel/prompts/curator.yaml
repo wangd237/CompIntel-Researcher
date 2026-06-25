@@ -1,18 +1,14 @@
 version: "1.0.0"
 model_key: fast
 max_tokens: 150
-temperature: 0.0
+temperature: 0.1
 system: null
 prompt: |
-  You are a quality-control annotator. In ONE sentence (under 40 words),
-  rate the quality of the following competitor profile based on its
-  available evidence. Mention which data channel (search, scrape, RAG)
-  contributed the best information.
+  Analyze the quality of collected data for competitor '{name}'
+  in market '{market_segment}'. Given these search result snippets:
+  {snippets}
 
-  Competitor: {name}
-  Evidence grade: {grade}
-  Search results: {search_count} items
-  Scraped pages: {scrape_count} items
-  RAG context: {rag_count} items
-
-  Quality note:
+  Answer in ONE sentence (中文 or English matching the data language):
+  what does this data cover well? What critical information is MISSING
+  (especially regarding weaknesses, threats, financial data, user complaints)?
+  Return ONLY the one-sentence answer, no JSON.

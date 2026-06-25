@@ -267,6 +267,7 @@ class QdrantStore:
     def ensure_collection(self) -> None:
         assert self.client is not None
         if self.client.collection_exists(self.collection_name):
+            self._validate_or_recreate_collection()
             return
         self.client.create_collection(
             collection_name=self.collection_name,
@@ -281,6 +282,52 @@ class QdrantStore:
             },
         )
 
+    def _validate_or_recreate_collection(self) -> None:
+        """Ensure the existing collection has named vectors (dense + sparse).
+
+        Collections created before the hybrid-search migration (June 2026)
+        used an unnamed default vector.  Ingesting with named vectors on
+        such a collection would fail silently.  We detect the mismatch and
+        recreate the collection — losing existing data, but preventing a
+        cascade of mysterious 500s on every subsequent operation.
+
+        For production persistence (QDRANT_PATH) the user sees a warning;
+        for :memory: (tests / dev) the data loss is bounded to the session.
+        """
+        assert self.client is not None
+        try:
+            info = self.client.get_collection(self.collection_name)
+        except Exception:
+            return  # can't introspect — proceed optimistically
+
+        config = info.config
+        params = config.params
+        if params.vectors is not None and hasattr(params.vectors, "size"):
+            # Old-style single unnamed vector — no named "dense" or "sparse"
+            logger.warning(
+                "Collection %r uses the old unnamed-vector schema.  "
+                "Deleting and recreating with named dense+sparse vectors.  "
+                "Existing RAG data will be lost — re-run with seed data.",
+                self.collection_name,
+            )
+            self.client.delete_collection(self.collection_name)
+            self.ensure_collection()
+            return
+
+        # Named-vector collection — verify expected names exist
+        vector_names = set(getattr(params.vectors, "keys", lambda: [])())
+        sparse_names = {}
+        if params.sparse_vectors is not None:
+            sparse_names = set(getattr(params.sparse_vectors, "keys", lambda: [])())
+        if "dense" not in vector_names or "sparse" not in sparse_names:
+            logger.warning(
+                "Collection %r is missing expected vector names (has %s, %s).  "
+                "Recreating with correct schema.",
+                self.collection_name, vector_names, sparse_names,
+            )
+            self.client.delete_collection(self.collection_name)
+            self.ensure_collection()
+
     def ingest(self, documents: Iterable[RagDocument | dict[str, Any]], batch_size: int = 100) -> int:
         self.ensure_collection()
         points: list[PointStruct] = []
@@ -290,10 +337,10 @@ class QdrantStore:
             for chunk_index, chunk in enumerate(self._chunk_text(rag_document.text)):
                 point_id = self._point_id(rag_document.source, chunk_index, chunk)
                 payload = {
+                    **rag_document.metadata,
                     "text": chunk,
                     "source": rag_document.source,
                     "chunk_index": chunk_index,
-                    **rag_document.metadata,
                 }
                 points.append(
                     PointStruct(

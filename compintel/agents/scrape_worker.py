@@ -88,9 +88,12 @@ class BeautifulSoupScraper:
     def scrape(self, url: str, user_agent: str, timeout: float = 20) -> dict[str, Any]:
         request = Request(url, headers={"User-Agent": user_agent})
         with urlopen(request, timeout=timeout) as response:
-            html = response.read().decode("utf-8", errors="ignore")
+            raw = response.read()
+            # Let BeautifulSoup detect encoding from <meta charset> /
+            # Content-Type header.  decode("utf-8", errors="ignore")
+            # silently drops GBK/GB2312 content from many Chinese sites.
+            soup = BeautifulSoup(raw, "html.parser", from_encoding=response.headers.get_content_charset())
 
-        soup = BeautifulSoup(html, "html.parser")
         for node in soup(["script", "style", "noscript"]):
             node.decompose()
 

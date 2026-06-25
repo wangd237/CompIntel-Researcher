@@ -24,6 +24,17 @@ def load_bundle(bundle_path: Path) -> dict[str, Any]:
     return {"result": snapshot.get("result", {}), "report": report}
 
 
+def _safe_list(value: Any) -> list[Any]:
+    """Coerce *value* to a list, handling None and scalar values safely."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    return [value]
+
+
 def score_competitor_authenticity(result: dict[str, Any]) -> tuple[int, str]:
     """1. 竞品真实性 — all competitor names are real companies (0/1/2)."""
     profiles = result.get("profiles", [])
@@ -53,9 +64,9 @@ def score_market_segment_accuracy(result: dict[str, Any]) -> tuple[int, str]:
         return 1, "无 competitive_landscape 数据，无法判断"
 
     all_players = (
-        list(landscape.get("leaders", []))
-        + list(landscape.get("challengers", []))
-        + list(landscape.get("niche", landscape.get("niche_players", [])))
+        _safe_list(landscape.get("leaders"))
+        + _safe_list(landscape.get("challengers"))
+        + _safe_list(landscape.get("niche", landscape.get("niche_players")))
     )
     if not all_players:
         return 1, "competitive_landscape 为空"
