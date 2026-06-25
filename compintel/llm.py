@@ -170,18 +170,18 @@ def _post_chat_completion(endpoint: str, api_key: str, payload: dict[str, Any], 
 
     # deepseek-reasoner (and similar reasoning models) may put the
     # actual response in reasoning_content and leave content empty.
+    # V4 models (v4-pro, v4-flash) also exhibit this when the prompt
+    # is long enough to trigger spontaneous reasoning.
     if not content and reasoning:
         # The reasoning text often ends with the actual JSON answer.
         # Try to extract the last JSON object from it.
         content = _extract_tail_json(reasoning)
         if content is None:
-            raise RuntimeError(
-                "LLM reasoning model returned only chain-of-thought without "
-                "a JSON object in the response.  The model consumed all tokens "
-                "on reasoning.  Either increase max_tokens or switch to a "
-                "non-reasoning model (e.g. deepseek-chat instead of "
-                "deepseek-reasoner) for structured-output tasks."
-            )
+            # Don't raise — the consumer's JSON repair / fallback chain
+            # can often salvage useful output from raw reasoning text.
+            # Raising RuntimeError causes a retry with the same model
+            # and the same outcome, wasting tokens.
+            content = reasoning
     if content is None:
         raise RuntimeError("LLM provider returned no message content.")
     # DeepSeek reasoning models sometimes return a whitespace-only string

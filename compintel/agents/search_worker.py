@@ -10,12 +10,52 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import sys
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
 from ..settings import CompIntelSettings
 from .base import BaseCompIntelAgent
+
+# ── Windows SSL certificate workaround ──────────────────────────────────
+# Python on Windows (especially in Conda environments) often cannot find
+# the system CA bundle, causing SSLEOFError on HTTPS connections that
+# work fine in curl / browsers.  This helper locates a valid bundle at
+# module-load time and sets SSL_CERT_FILE if needed.
+
+_WINDOWS_CA_PATHS = [
+    # certifi (commonly installed alongside requests / httpx)
+    lambda: __import__("certifi").where(),
+    # Conda standard paths
+    os.path.expandvars(r"%CONDA_PREFIX%\Library\ssl\cacert.pem"),
+    os.path.expandvars(r"%CONDA_PREFIX%\Library\ssl\cert.pem"),
+    os.path.expandvars(r"%CONDA_PREFIX%\ssl\cert.pem"),
+    # pip / system Python
+    os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python310\Lib\site-packages\pip\_vendor\certifi\cacert.pem"),
+    os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python311\Lib\site-packages\pip\_vendor\certifi\cacert.pem"),
+]
+
+def _ensure_ssl_certs() -> None:
+    """Try to set SSL_CERT_FILE so that httpx/requests can validate TLS."""
+    if os.environ.get("SSL_CERT_FILE"):
+        return  # already configured
+
+    if sys.platform != "win32":
+        return  # macOS/Linux typically find certs via system paths
+
+    for candidate in _WINDOWS_CA_PATHS:
+        try:
+            path = candidate() if callable(candidate) else candidate
+        except Exception:
+            continue
+        if path and os.path.isfile(path):
+            os.environ["SSL_CERT_FILE"] = path
+            return
+
+
+_ensure_ssl_certs()
 
 logger = logging.getLogger(__name__)
 
