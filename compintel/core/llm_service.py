@@ -361,7 +361,7 @@ class LLMService:
                     max_tokens=reasoning_max_tokens,
                     temperature=temperature,
                     timeout=timeout,
-                    thinking_mode="thinking",
+                    thinking={"type": "enabled"},
                 )
                 reasoning_text = (raw.get("reasoning_content") or raw.get("content") or "").strip()
                 if reasoning_text:
@@ -441,8 +441,10 @@ class LLMService:
                     model=format_model_name,
                     llm_provider=format_provider,
                     max_tokens=formatting_max_tokens,
-                    temperature=0.0,  # deterministic for JSON structure
+                    temperature=0.0,
                     timeout=timeout,
+                    thinking={"type": "disabled"},
+                    response_format={"type": "json_object"},
                 )
                 parsed = load_repaired_json(str(raw))
                 if isinstance(parsed, dict):
@@ -466,37 +468,67 @@ class LLMService:
                     )
             except Exception as exc:
                 last_error = exc
+                err_str = str(exc)
+                is_spontaneous_reasoning = (
+                    "spontaneously entered reasoning" in err_str
+                    or "consumed all tokens on chain-of-thought" in err_str
+                )
                 logger.warning(
                     "Formatter call failed (attempt %d/%d): %s",
-                    attempt, max_attempts, str(exc)[:200],
+                    attempt, max_attempts, err_str[:200],
                 )
+                if is_spontaneous_reasoning:
+                    # Don't retry — the model will do this again on
+                    # every attempt.  Break out and fall through to
+                    # the smart-model fallback immediately.
+                    logger.warning(
+                        "Formatter hit spontaneous reasoning — "
+                        "breaking out of retry loop (attempt %d/%d)",
+                        attempt, max_attempts,
+                    )
+                    break
             if attempt < max_attempts:
                 await asyncio.sleep(1)
 
         logger.error(
             "Formatter failed after %d attempts (last_error=%s) — "
-            "falling back to direct call without reasoning context",
+            "reasoning→format pipeline degraded, falling back to "
+            "single-model structured-output call",
             max_attempts, last_error,
         )
 
-        # ── Fallback: direct single-model call without reasoning context ─
-        # The reasoner produced useful analysis, but the formatter (even with
-        # compressed reasoning) couldn't convert it to structured JSON.  This
-        # happens when the formatting model itself enters a reasoning loop
-        # (some DeepSeek chat models now emit reasoning_content).
+        # ── Fallback: switch model and drop reasoning context ──────────
+        # When the formatting model (v4-flash) burns all tokens on a
+        # spontaneous chain-of-thought, retrying the same model with the
+        # same prompt shape is futile.  Two changes:
         #
-        # Fall back to a simple call_and_parse with the original prompt —
-        # the reasoning is discarded, but we still get LLM-quality output
-        # instead of degrading all the way to derived/template.
+        # 1. Switch to the SMART model (v4-pro) which is less prone to
+        #    uncontrolled reasoning on structured-output tasks.
+        # 2. Use a small non-zero temperature — temperature=0.0 correlates
+        #    with reasoning-mode entrance on some DeepSeek V4 deployments.
+        # 3. Trim the prompt if it is very long — V4 models enter reasoning
+        #    more readily when the user message exceeds ~2000 characters.
         try:
+            trimmed_prompt = prompt
+            if len(prompt) > 4000:
+                trimmed_prompt = prompt[:4000] + (
+                    "\n\n…[truncated — see full context in reasoning log]"
+                )
+
             fallback = await self.call_and_parse(
-                prompt=prompt,
-                model_key=formatting_model_key,
+                prompt=trimmed_prompt,
+                model_key="smart",  # v4-pro, not v4-flash
                 max_tokens=formatting_max_tokens,
-                temperature=0.0,
+                temperature=0.1,
+                system_prompt=(
+                    "You are a JSON formatting assistant.  "
+                    "Respond with ONLY a valid JSON object — no explanation, "
+                    "no markdown fences, no commentary.  "
+                    "Start your response with { and end with }."
+                ),
             )
             if isinstance(fallback, dict):
-                logger.info("Formatter fallback succeeded — using direct LLM output")
+                logger.info("Formatter fallback succeeded (smart model, no reasoning)")
                 return fallback
         except Exception as fb_exc:
             logger.warning("Formatter fallback also failed: %s", str(fb_exc)[:200])

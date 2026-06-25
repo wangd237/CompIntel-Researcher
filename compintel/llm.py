@@ -20,15 +20,21 @@ async def create_chat_completion(
     max_tokens: int = 1000,
     temperature: float = 0.2,
     timeout: float | None = None,
-    thinking_mode: str | None = None,
+    thinking: dict[str, str] | None = None,
+    response_format: dict[str, str] | None = None,
     **_: Any,
 ) -> str:
     """Call an OpenAI-compatible chat completions endpoint.
 
-    The provider value is currently informational because DeepSeek, Kimi, GLM,
-    and custom compatible endpoints all expose the same request shape here.
-
-    If *timeout* is not provided the global ``LLM_TIMEOUT_SECONDS`` default is used.
+    Parameters
+    ----------
+    thinking:
+        DeepSeek V4 thinking control.  ``{"type": "disabled"}`` prevents
+        the model from burning tokens on chain-of-thought; ``{"type":
+        "enabled"}`` enables reasoning.  Omit for provider default.
+    response_format:
+        OpenAI-compatible JSON mode.  ``{"type": "json_object"}``
+        guarantees the model output is valid JSON (V4 non-thinking only).
     """
 
     settings = CompIntelSettings.from_env()
@@ -39,14 +45,16 @@ async def create_chat_completion(
 
     endpoint = _chat_endpoint(settings.llm_base_url)
     _, model_name = _split_provider_model(model)
-    payload = {
+    payload: dict[str, Any] = {
         "model": model_name,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
-    if thinking_mode:
-        payload["thinking_mode"] = thinking_mode
+    if thinking:
+        payload["thinking"] = thinking
+    if response_format:
+        payload["response_format"] = response_format
     effective_timeout = timeout if timeout is not None else settings.llm_timeout_seconds
     return await asyncio.to_thread(
         _post_chat_completion,
@@ -64,7 +72,7 @@ async def create_chat_completion_raw(
     max_tokens: int = 1000,
     temperature: float = 0.2,
     timeout: float | None = None,
-    thinking_mode: str | None = None,
+    thinking: dict[str, str] | None = None,
     **_: Any,
 ) -> dict[str, str | None]:
     """Like :func:`create_chat_completion` but returns the raw message dict
@@ -82,14 +90,14 @@ async def create_chat_completion_raw(
 
     endpoint = _chat_endpoint(settings.llm_base_url)
     _, model_name = _split_provider_model(model)
-    payload = {
+    payload: dict[str, Any] = {
         "model": model_name,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
-    if thinking_mode:
-        payload["thinking_mode"] = thinking_mode
+    if thinking:
+        payload["thinking"] = thinking
     effective_timeout = timeout if timeout is not None else settings.llm_timeout_seconds
     return await asyncio.to_thread(
         _post_chat_completion_raw,
@@ -168,20 +176,26 @@ def _post_chat_completion(endpoint: str, api_key: str, payload: dict[str, Any], 
     content = raw["content"]
     reasoning = raw["reasoning_content"]
 
-    # deepseek-reasoner (and similar reasoning models) may put the
-    # actual response in reasoning_content and leave content empty.
-    # V4 models (v4-pro, v4-flash) also exhibit this when the prompt
-    # is long enough to trigger spontaneous reasoning.
+    # V4 models (v4-pro, v4-flash) may spontaneously enter reasoning
+    # mode, putting the actual answer in reasoning_content and leaving
+    # content empty.  Try to extract JSON from the reasoning tail.
     if not content and reasoning:
-        # The reasoning text often ends with the actual JSON answer.
-        # Try to extract the last JSON object from it.
         content = _extract_tail_json(reasoning)
         if content is None:
-            # Don't raise — the consumer's JSON repair / fallback chain
-            # can often salvage useful output from raw reasoning text.
-            # Raising RuntimeError causes a retry with the same model
-            # and the same outcome, wasting tokens.
-            content = reasoning
+            # Only treat *intentional* reasoning as valid output.
+            # Spontaneous reasoning without extractable JSON means the
+            # model burned all tokens on chain-of-thought.
+            thinking_cfg = payload.get("thinking", {})
+            if isinstance(thinking_cfg, dict) and thinking_cfg.get("type") == "enabled":
+                # Reasoner was asked to think — the reasoning IS the output
+                content = reasoning
+            else:
+                raise RuntimeError(
+                    "Model spontaneously entered reasoning mode and "
+                    "consumed all tokens on chain-of-thought without "
+                    "producing structured output.  The caller should "
+                    "retry with a shorter prompt or a different model."
+                )
     if content is None:
         raise RuntimeError("LLM provider returned no message content.")
     # DeepSeek reasoning models sometimes return a whitespace-only string
