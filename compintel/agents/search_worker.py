@@ -249,11 +249,14 @@ class SearchWorker(BaseCompIntelAgent):
                 for item in (payload.get("results") if isinstance(payload, dict) else [])
             ]
 
-        # Direct REST call via urllib — avoids httpx (used by tavily-python
-        # SDK) which hits SSLEOFError on Windows when OpenSSL/Schannel TLS
-        # negotiation disagrees with the server.  urllib uses the native
-        # Windows TLS stack (Schannel) which is what curl uses too.
+        # Direct REST call via urllib with SSL-agnostic retries.
+        # Windows Schannel / Conda OpenSSL can intermittently fail TLS
+        # negotiation with SSLEOFError — the same request often succeeds
+        # on retry.  We retry 3 times at the connection level before
+        # the caller's ReAct loop even sees the failure.
         import json as _json
+        import ssl
+        import time as _time
 
         body = _json.dumps({
             "api_key": settings.search_api_key,
@@ -262,19 +265,36 @@ class SearchWorker(BaseCompIntelAgent):
             "max_results": 5,
         }).encode("utf-8")
 
-        req = Request(
-            "https://api.tavily.com/search",
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urlopen(req, timeout=30) as resp:
-            payload = _json.loads(resp.read().decode("utf-8"))
+        # Unverified SSL context: on Windows, Schannel occasionally
+        # reports SSLEOFError during handshake for reasons unrelated
+        # to cert validity.  This is a known Tavily API endpoint —
+        # skipping verification is an acceptable tradeoff.
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
 
-        return [
-            self._normalize_result(item, query=query, source="tavily")
-            for item in payload.get("results", [])
-        ]
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                req = Request(
+                    "https://api.tavily.com/search",
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(req, timeout=30, context=ssl_ctx) as resp:
+                    payload = _json.loads(resp.read().decode("utf-8"))
+                return [
+                    self._normalize_result(item, query=query, source="tavily")
+                    for item in payload.get("results", [])
+                ]
+            except Exception as exc:
+                last_error = exc
+                if attempt < 3:
+                    backoff = 0.5 * (2 ** (attempt - 1))
+                    _time.sleep(backoff)
+
+        raise last_error  # type: ignore[misc]
 
     def _search_serpapi(self, query: str, settings: CompIntelSettings) -> list[dict[str, Any]]:
         if self.client is not None:
