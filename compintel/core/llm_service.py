@@ -66,6 +66,8 @@ class LLMService:
         temperature: float = 0.2,
         timeout: float | None = None,
         system_prompt: str | None = None,
+        thinking: dict[str, str] | None = None,
+        response_format: dict[str, str] | None = None,
     ) -> str:
         """Single LLM call with network retry.  Returns raw text.
 
@@ -80,21 +82,20 @@ class LLMService:
         max_tokens:
             Maximum tokens in the completion.
         temperature:
-            Sampling temperature (0.0–2.0).
+            Sampling temperature (0.0–2.0).  DeepSeek marks this as
+            "will not be validated" in thinking mode — use 1.0-1.5
+            in thinking, 0.2 in non-thinking.
         timeout:
             Override for the global ``LLM_TIMEOUT_SECONDS`` setting.
         system_prompt:
             Optional system-level instruction prepended to the messages list.
-
-        Returns
-        -------
-        str
-            The raw text content of the first choice.
-
-        Raises
-        ------
-        RuntimeError
-            If the provider is unreachable after retries or returns no content.
+        thinking:
+            DeepSeek V4 thinking control dict.  ``{"type": "disabled"}``
+            for structured-output calls; ``{"type": "enabled"}`` for
+            reasoning-heavy tasks.
+        response_format:
+            Optional OpenAI-compatible response format dict, e.g.
+            ``{"type": "json_object"}``.
         """
         model = self._resolve_model(model_key)
         provider, model_name = _split_provider_model(model)
@@ -111,6 +112,8 @@ class LLMService:
             max_tokens=max_tokens,
             temperature=temperature,
             timeout=timeout,
+            thinking=thinking,
+            response_format=response_format,
         )
 
     async def call_and_parse(
@@ -146,6 +149,8 @@ class LLMService:
                     temperature=temperature,
                     timeout=timeout,
                     system_prompt=system_prompt,
+                    thinking={"type": "disabled"},
+                    response_format={"type": "json_object"},
                 )
             except Exception as exc:
                 last_error = exc

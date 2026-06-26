@@ -20,7 +20,7 @@ async def create_chat_completion(
     max_tokens: int = 1000,
     temperature: float = 0.2,
     timeout: float | None = None,
-    thinking: dict[str, str] | None = None,
+    thinking: dict[str, str] | None = {"type": "disabled"},
     response_format: dict[str, str] | None = None,
     **_: Any,
 ) -> str:
@@ -29,9 +29,10 @@ async def create_chat_completion(
     Parameters
     ----------
     thinking:
-        DeepSeek V4 thinking control.  ``{"type": "disabled"}`` prevents
-        the model from burning tokens on chain-of-thought; ``{"type":
-        "enabled"}`` enables reasoning.  Omit for provider default.
+        DeepSeek V4 thinking control, passed via ``extra_body``.
+        ``{"type": "disabled"}`` prevents the model from burning tokens
+        on chain-of-thought; ``{"type": "enabled"}`` enables reasoning.
+        Defaults to disabled to prevent spontaneous reasoning mode.
     response_format:
         OpenAI-compatible JSON mode.  ``{"type": "json_object"}``
         guarantees the model output is valid JSON (V4 non-thinking only).
@@ -52,7 +53,9 @@ async def create_chat_completion(
         "temperature": temperature,
     }
     if thinking:
-        payload["thinking"] = thinking
+        # DeepSeek requires thinking to be nested in extra_body,
+        # not at the top level of the request.
+        payload["extra_body"] = {"thinking": thinking}
     if response_format:
         payload["response_format"] = response_format
     effective_timeout = timeout if timeout is not None else settings.llm_timeout_seconds
@@ -72,7 +75,7 @@ async def create_chat_completion_raw(
     max_tokens: int = 1000,
     temperature: float = 0.2,
     timeout: float | None = None,
-    thinking: dict[str, str] | None = None,
+    thinking: dict[str, str] | None = {"type": "disabled"},
     **_: Any,
 ) -> dict[str, str | None]:
     """Like :func:`create_chat_completion` but returns the raw message dict
@@ -97,7 +100,7 @@ async def create_chat_completion_raw(
         "temperature": temperature,
     }
     if thinking:
-        payload["thinking"] = thinking
+        payload["extra_body"] = {"thinking": thinking}
     effective_timeout = timeout if timeout is not None else settings.llm_timeout_seconds
     return await asyncio.to_thread(
         _post_chat_completion_raw,
@@ -185,7 +188,8 @@ def _post_chat_completion(endpoint: str, api_key: str, payload: dict[str, Any], 
             # Only treat *intentional* reasoning as valid output.
             # Spontaneous reasoning without extractable JSON means the
             # model burned all tokens on chain-of-thought.
-            thinking_cfg = payload.get("thinking", {})
+            extra_body = payload.get("extra_body", {})
+            thinking_cfg = extra_body.get("thinking", {})
             if isinstance(thinking_cfg, dict) and thinking_cfg.get("type") == "enabled":
                 # Reasoner was asked to think — the reasoning IS the output
                 content = reasoning
