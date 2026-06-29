@@ -446,7 +446,7 @@ def test_scrape_worker_builds_targets_and_truncates_content() -> None:
         "https://notion.so/pricing",
         "https://notion.so/about",
     ]
-    assert len(result["scraped_content"]) == 5
+    assert len(result["scraped_content"]) == 4
     assert result["scraped_content"][0]["content"] == "x" * 10
     assert result["scraped_content"][0]["truncated"] is True
 
@@ -481,8 +481,7 @@ def test_scrape_worker_uses_review_sites_without_website() -> None:
     urls = worker._build_target_urls("Microsoft Teams", None)
 
     assert urls == [
-        "https://www.g2.com/search?query=Microsoft+Teams",
-        "https://www.capterra.com/search/?query=Microsoft+Teams",
+        "https://www.google.com/search?q=Microsoft+Teams",
     ]
 
 

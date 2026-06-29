@@ -20,7 +20,7 @@ from .schemas import (
     ExecutionTrackerSnapshot,
     IntentAnalysisResponse,
 )
-from .state import CompIntelState, CompetitorProfilerState
+from .state import CompIntelState
 from .tracker import ExecutionTracker
 
 __all__ = [
@@ -31,7 +31,6 @@ __all__ = [
     "CompIntelEvent",
     "CompIntelState",
     "CompetitorCandidate",
-    "CompetitorProfilerState",
     "CompIntelAnalyzeRequest",
     "CompIntelAnalyzeResponse",
     "ExecutionCheckpoint",
