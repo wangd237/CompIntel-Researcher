@@ -85,7 +85,7 @@ class CompIntelState(TypedDict, total=False):
 
     # ── Bookkeeping ──────────────────────────────────────────────────────
     retry_count: int
-    warnings: list[str]
+    warnings: Annotated[list[str], operator.add]
     execution_log: Annotated[list[ExecutionEvent], operator.add]
 
 
