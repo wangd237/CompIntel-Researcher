@@ -86,21 +86,11 @@ class StateAdapter:
     @property
     def profiles(self) -> list[dict[str, Any]]:
         """Aggregated competitor profiles (prefer curated after curator runs)."""
-        # curator output takes priority — it has cleaned + graded profiles
         val = self._state.get("curated_profiles")
         if isinstance(val, list) and val:
             return val
         val = self._state.get("profiles")
-        if isinstance(val, list):
-            return val
-        # Fall back to competitor_profiles (aliased in older state shapes)
-        val = self._state.get("competitor_profiles")
         return val if isinstance(val, list) else []
-
-    @property
-    def competitor_profiles(self) -> list[dict[str, Any]]:
-        """Alias for profiles (used in some state shapes)."""
-        return self.profiles
 
     # ── analysis ───────────────────────────────────────────────────────
 
@@ -153,77 +143,6 @@ class StateAdapter:
         """Per-node execution events (annotated with operator.add)."""
         val = self._state.get("execution_log")
         return val if isinstance(val, list) else []
-
-    @property
-    def errors(self) -> list[dict[str, Any]]:
-        """Error details accumulated during execution."""
-        val = self._state.get("errors")
-        return val if isinstance(val, list) else []
-
-    @property
-    def messages(self) -> list[dict[str, Any]]:
-        """Chat-style message log (reserved for future chat interface)."""
-        val = self._state.get("messages")
-        return val if isinstance(val, list) else []
-
-    @property
-    def status(self) -> str:
-        """High-level pipeline status."""
-        return str(self._state.get("status", ""))
-
-    @property
-    def metadata(self) -> dict[str, Any]:
-        """Arbitrary metadata attached to the pipeline run."""
-        val = self._state.get("metadata")
-        return val if isinstance(val, dict) else {}
-
-    # ── execution tracker fields ───────────────────────────────────────
-
-    @property
-    def phase(self) -> str:
-        """Current execution phase identifier."""
-        return str(self._state.get("phase", ""))
-
-    @property
-    def phase_status(self) -> str:
-        """Status of the current phase."""
-        return str(self._state.get("phase_status", ""))
-
-    @property
-    def phase_owner(self) -> str:
-        """Owner assigned to the current phase."""
-        return str(self._state.get("phase_owner", ""))
-
-    @property
-    def phase_started_at(self) -> str:
-        """ISO timestamp when the current phase started."""
-        return str(self._state.get("phase_started_at", ""))
-
-    @property
-    def phase_updated_at(self) -> str:
-        """ISO timestamp when the current phase was last updated."""
-        return str(self._state.get("phase_updated_at", ""))
-
-    @property
-    def next_action(self) -> str:
-        """Recommended next action in the pipeline."""
-        return str(self._state.get("next_action", ""))
-
-    @property
-    def blockers(self) -> list[str]:
-        """Active blockers preventing pipeline progress."""
-        val = self._state.get("blockers")
-        if isinstance(val, list):
-            return [str(item) for item in val if str(item).strip()]
-        return []
-
-    @property
-    def audit_notes(self) -> list[str]:
-        """Notes collected for the audit trail."""
-        val = self._state.get("audit_notes")
-        if isinstance(val, list):
-            return [str(item) for item in val if str(item).strip()]
-        return []
 
     # ── raw access (escape hatch) ──────────────────────────────────────
 
