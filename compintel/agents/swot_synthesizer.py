@@ -43,9 +43,8 @@ _GRADE_INSTRUCTIONS: dict[str, str] = {
 
 
 class SWOTSynthesizerAgent(BaseCompIntelAgent):
-    def __init__(self, model: str = "deepseek-chat", completion_fn: Any | None = None) -> None:
+    def __init__(self, model: str = "deepseek-chat") -> None:
         super().__init__(model=model, model_key="strategic")
-        self.completion_fn = completion_fn
 
     async def __call__(self, state: Any) -> dict[str, Any]:
         s = self.read_state(state)
@@ -63,7 +62,6 @@ class SWOTSynthesizerAgent(BaseCompIntelAgent):
                 swot = self._fallback_swot(profiles, market_analysis)
                 source = "template"
 
-        # ── self-audit (LLM path only; non-blocking) ──
         audit_warnings: list[str] = []
         if source == "llm":
             audit_warnings = self._self_audit(swot, profiles)
@@ -82,38 +80,22 @@ class SWOTSynthesizerAgent(BaseCompIntelAgent):
         profiles: list[dict[str, Any]],
         market_analysis: dict[str, Any],
     ) -> dict[str, Any] | None:
-        if self.completion_fn is not None:
-            return await self._legacy_llm_synthesize(profiles, market_analysis)
-
-        # ── Per-competitor SWOT ────────────────────────────────────────
-        sem = asyncio.Semaphore(3)  # throttle concurrent per-competitor calls
+        sem = asyncio.Semaphore(3)
         market_overview = str(market_analysis.get("market_overview", ""))
 
         async def _swot_for(profile: dict[str, Any]) -> dict[str, Any] | None:
             async with sem:
                 return await self._synthesize_one(profile, market_overview)
 
-        tasks = [
-            _swot_for(profile)
-            for profile in profiles
-            if isinstance(profile, dict)
-        ]
+        tasks = [_swot_for(p) for p in profiles if isinstance(p, dict)]
         if not tasks:
             return None
-
         results = await asyncio.gather(*tasks)
-
-        competitors = []
-        for result in results:
-            if isinstance(result, dict):
-                competitors.append(result)
-
+        competitors = [r for r in results if isinstance(r, dict)]
         if not competitors:
             return None
 
-        # ── Cross-analysis (aggregation) ───────────────────────────────
         cross = await self._synthesize_cross_analysis(competitors, market_overview)
-
         return {
             "summary": cross.get("summary", f"SWOT synthesized for {len(competitors)} competitors."),
             "competitors": competitors,
@@ -194,66 +176,6 @@ class SWOTSynthesizerAgent(BaseCompIntelAgent):
             "summary": f"SWOT analysis for {len(competitors)} competitors.",
             "cross_analysis": {"common_strengths": [], "differentiators": []},
         }
-
-    async def _legacy_llm_synthesize(
-        self,
-        profiles: list[dict[str, Any]],
-        market_analysis: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        """Backward-compat path when a test-injected *completion_fn* is present."""
-        try:
-            from ..llm import create_chat_completion, _split_provider_model
-            from ..settings import CompIntelSettings
-        except Exception:
-            logger.exception("Failed to import legacy LLM deps")
-            return None
-
-        settings = CompIntelSettings.from_env()
-        if not settings.llm_api_key:
-            return None
-
-        provider, model = _split_provider_model(settings.strategic_llm)
-        compact_profiles = [
-            {
-                "name": profile.get("name"),
-                "summary": profile.get("summary"),
-                "sources": profile.get("sources", []),
-                "search_results": profile.get("search_results", [])[:2],
-                "scraped_content": profile.get("scraped_content", [])[:1],
-                "rag_context": profile.get("rag_context", [])[:1],
-            }
-            for profile in profiles
-            if isinstance(profile, dict)
-        ]
-        prompt = (
-            "You are CompIntel's SWOT synthesizer.\n"
-            "Return strict JSON with keys summary, competitors, cross_analysis.\n"
-            "For each competitor, produce strengths, weaknesses, opportunities, threats arrays. "
-            "Every item must be an object with text and evidence fields. Evidence must be derived "
-            "from profile sources, URLs, scraped content, search results, or RAG context.\n"
-            "cross_analysis must include common_strengths and differentiators.\n"
-            f"Profiles: {safe_json_dumps(compact_profiles)}\n"
-            f"Market analysis: {safe_json_dumps(market_analysis)}\n"
-        )
-        try:
-            raw = await self.completion_fn(
-                messages=[{"role": "user", "content": prompt}],
-                model=model,
-                llm_provider=provider,
-                max_tokens=2200,
-                temperature=0.2,
-            )
-        except TypeError:
-            raw = await self.completion_fn(prompt)
-        except Exception as exc:
-            logger.warning("SWOT synthesizer LLM call failed; using derived SWOT: %s", exc)
-            return None
-
-        from ..parsing import load_repaired_json
-        parsed = load_repaired_json(str(raw))
-        if isinstance(parsed, dict):
-            return self._normalize_swot(parsed)
-        return None
 
     # ── self-audit ─────────────────────────────────────────────────────
 

@@ -25,9 +25,8 @@ class EditorAgent(BaseCompIntelAgent):
     and can rewrite the executive summary based on actual section content.
     """
 
-    def __init__(self, model: str = "deepseek-chat", completion_fn: Any | None = None) -> None:
+    def __init__(self, model: str = "deepseek-chat") -> None:
         super().__init__(model=model, model_key="smart")
-        self.completion_fn = completion_fn
 
     async def __call__(self, state: Any) -> dict[str, Any]:
         s = self.read_state(state)
@@ -56,9 +55,6 @@ class EditorAgent(BaseCompIntelAgent):
     async def _edit_report(
         self, report: dict[str, Any], language: str
     ) -> dict[str, Any] | None:
-        if self.completion_fn is not None:
-            return None  # skip LLM editor for test-injected paths
-
         # Build a compact version: sections with titles + content,
         # plus the existing executive_summary and conclusion for context.
         compact = {

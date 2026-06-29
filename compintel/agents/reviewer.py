@@ -15,9 +15,8 @@ from .base import BaseCompIntelAgent
 class ReviewerAgent(BaseCompIntelAgent):
     MAX_RETRIES = 3
 
-    def __init__(self, model: str = "deepseek-chat", completion_fn: Any | None = None) -> None:
+    def __init__(self, model: str = "deepseek-chat") -> None:
         super().__init__(model=model, model_key="strategic")
-        self.completion_fn = completion_fn
 
     async def __call__(self, state: Any) -> dict[str, Any]:
         s = self.read_state(state)
@@ -53,83 +52,14 @@ class ReviewerAgent(BaseCompIntelAgent):
         report: dict[str, Any],
         retry_count: int,
     ) -> dict[str, Any] | None:
-        if self.completion_fn is not None:
-            return await self._legacy_llm_review(report, retry_count)
-
         prompt = load_prompt("reviewer")
-        # Reviewer is a scoring task, not a reasoning-intensive task.
-        # call_and_parse with JSON mode is sufficient — the model doesn't
-        # need chain-of-thought to count template hits or score dimensions.
-        # This saves 2 extra LLM calls (reasoning + formatting) vs the old
-        # call_with_reasoning path.
         parsed = await self.llm.call_and_parse(
-            prompt.format(
-                retry_count=retry_count,
-                report=safe_json_dumps(report),
-            ),
+            prompt.format(retry_count=retry_count, report=safe_json_dumps(report)),
             model_key="smart",
             max_tokens=1200,
             temperature=prompt.temperature,
             max_attempts=3,
         )
-        if isinstance(parsed, dict):
-            return self._normalize_review(parsed, retry_count)
-        return None
-
-    async def _legacy_llm_review(
-        self,
-        report: dict[str, Any],
-        retry_count: int,
-    ) -> dict[str, Any] | None:
-        """Backward-compat path when a test-injected *completion_fn* is present."""
-        try:
-            from ..llm import create_chat_completion, _split_provider_model
-            from ..settings import CompIntelSettings
-        except Exception:
-            logger.exception("Failed to import legacy LLM deps")
-            return None
-
-        settings = CompIntelSettings.from_env()
-        if not settings.llm_api_key:
-            return None
-
-        provider, model = _split_provider_model(settings.strategic_llm)
-        prompt = (
-            "You are CompIntel's LLM-as-Judge reviewer. Score the report on three "
-            "dimensions from 0 to 10: completeness, accuracy, actionability. "
-            "Return strict JSON with keys completeness, accuracy, actionability, "
-            "issues, note.\n"
-            "CRITICAL SCORING RULES:\n"
-            "- If any competitor profile contains 'Seed notes should be replaced' or "
-            "'GPT Researcher' or 'company tracked by CompIntel Research', score "
-            "completeness ≤ 3 and accuracy ≤ 4 — the system failed to collect real data.\n"
-            "- If all sources are internal labels like 'search_worker', 'scrape_worker', "
-            "'rag_retriever', 'seed:*' or 'tavily' (NOT real http/https URLs), score "
-            "accuracy ≤ 3.\n"
-            "- If search or scrape errors appear ('No module named', 'HTTP 403', "
-            "'profiling skipped'), score completeness ≤ 4 and add concrete issues.\n"
-            "The final score will be completeness*0.4 + accuracy*0.4 "
-            "+ actionability*0.2. Issues must be concrete rewrite instructions when "
-            "a score is below 7.\n"
-            f"Retry count: {retry_count}\n"
-            f"Report: {safe_json_dumps(report)}\n"
-        )
-        try:
-            raw = await self.completion_fn(
-                messages=[{"role": "user", "content": prompt}],
-                model=model,
-                llm_provider=provider,
-                max_tokens=1200,
-                temperature=0.1,
-            )
-        except TypeError:
-            raw = await self.completion_fn(prompt)
-        except Exception as exc:
-            logger.warning("Reviewer LLM call failed; using rule-based review: %s", exc)
-            return None
-
-        from ..parsing import load_repaired_json
-        parsed = load_repaired_json(str(raw))
         if isinstance(parsed, dict):
             return self._normalize_review(parsed, retry_count)
         return None

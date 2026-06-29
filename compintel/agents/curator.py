@@ -117,9 +117,8 @@ _DATA_QUALITY_LABELS = {
 class CuratorAgent(BaseCompIntelAgent):
     """Content curator: clean profiles, deduplicate sources, grade evidence quality."""
 
-    def __init__(self, model: str = "deepseek-chat", completion_fn: Any | None = None) -> None:
+    def __init__(self, model: str = "deepseek-chat") -> None:
         super().__init__(model=model, model_key="fast")
-        self.completion_fn = completion_fn
 
     async def __call__(self, state: Any) -> dict[str, Any]:
         s = self.read_state(state)
@@ -151,7 +150,7 @@ class CuratorAgent(BaseCompIntelAgent):
             })
 
             # Step 3: Optional LLM-based quality summary (lightweight)
-            if self.completion_fn is not None or self.llm.settings.llm_api_key:
+            if self.llm.settings.llm_api_key:
                 quality_note = await self._assess_quality_llm(name, cleaned, market_segment)
                 if quality_note:
                     cleaned["curator_note"] = quality_note
@@ -264,9 +263,6 @@ class CuratorAgent(BaseCompIntelAgent):
         self, name: str, profile: dict[str, Any], market_segment: str
     ) -> str | None:
         """Lightweight LLM call to summarize what this profile contains / lacks."""
-        if self.completion_fn is not None:
-            return None  # skip LLM for test-injected paths
-
         snippets: list[str] = []
         for item in (profile.get("search_results") or [])[:3]:
             if isinstance(item, dict):

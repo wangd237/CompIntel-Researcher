@@ -13,9 +13,8 @@ from .base import BaseCompIntelAgent
 
 
 class MarketAnalystAgent(BaseCompIntelAgent):
-    def __init__(self, model: str = "deepseek-chat", completion_fn: Any | None = None) -> None:
+    def __init__(self, model: str = "deepseek-chat") -> None:
         super().__init__(model=model, model_key="smart")
-        self.completion_fn = completion_fn
 
     async def __call__(self, state: Any) -> dict[str, Any]:
         s = self.read_state(state)
@@ -33,7 +32,6 @@ class MarketAnalystAgent(BaseCompIntelAgent):
                 market_analysis = self._fallback_analysis(profiles, market_segment)
                 source = "template"
 
-        # ── self-audit (LLM path only; non-blocking) ──
         audit_warnings: list[str] = []
         if source == "llm":
             audit_warnings = self._self_audit(market_analysis, profiles)
@@ -52,91 +50,18 @@ class MarketAnalystAgent(BaseCompIntelAgent):
         profiles: list[dict[str, Any]],
         market_segment: str,
     ) -> dict[str, Any] | None:
-        if self.completion_fn is not None:
-            return await self._legacy_llm_analyze(profiles, market_segment)
-
         compact_profiles = [
-            {
-                "name": profile.get("name"),
-                "summary": profile.get("summary"),
-                "sources": profile.get("sources", []),
-                "search_results": profile.get("search_results", [])[:2],
-                "rag_context": profile.get("rag_context", [])[:1],
-            }
-            for profile in profiles
-            if isinstance(profile, dict)
+            {"name": p.get("name"), "summary": p.get("summary"), "sources": p.get("sources", []),
+             "search_results": p.get("search_results", [])[:2], "rag_context": p.get("rag_context", [])[:1]}
+            for p in profiles if isinstance(p, dict)
         ]
         prompt = load_prompt("market_analyst")
         parsed = await self.llm.call_and_parse(
-            prompt.format(
-                market_segment=market_segment,
-                profiles=safe_json_dumps(compact_profiles),
-            ),
+            prompt.format(market_segment=market_segment, profiles=safe_json_dumps(compact_profiles)),
             model_key=prompt.model_key,
             max_tokens=prompt.max_tokens,
             temperature=prompt.temperature,
         )
-        if isinstance(parsed, dict):
-            return self._normalize_analysis(parsed)
-        return None
-
-    async def _legacy_llm_analyze(
-        self,
-        profiles: list[dict[str, Any]],
-        market_segment: str,
-    ) -> dict[str, Any] | None:
-        """Backward-compat path when a test-injected *completion_fn* is present."""
-        try:
-            from ..llm import create_chat_completion, _split_provider_model
-            from ..settings import CompIntelSettings
-        except Exception:
-            logger.exception("Failed to import legacy LLM deps")
-            return None
-
-        settings = CompIntelSettings.from_env()
-        if not settings.llm_api_key:
-            return None
-
-        provider, model = _split_provider_model(settings.smart_llm)
-        compact_profiles = [
-            {
-                "name": profile.get("name"),
-                "summary": profile.get("summary"),
-                "sources": profile.get("sources", []),
-                "search_results": profile.get("search_results", [])[:2],
-                "rag_context": profile.get("rag_context", [])[:1],
-            }
-            for profile in profiles
-            if isinstance(profile, dict)
-        ]
-        prompt = (
-            "You are CompIntel's market analyst.\n"
-            "Analyze the SPECIFIC market segment named below and return strict JSON "
-            "with keys: market_overview, growth_trends, competitive_landscape, "
-            "key_differentiators, barriers_to_entry.\n"
-            "competitive_landscape must include leaders, challengers, and niche lists.\n"
-            "CRITICAL: Every trend, differentiator, and barrier MUST be specific to "
-            "this exact market segment — do NOT use generic SaaS/collaboration language "
-            "unless the segment IS SaaS/collaboration.\n"
-            f"Market segment: {market_segment}\n"
-            f"Profiles: {safe_json_dumps(compact_profiles)}\n"
-        )
-        try:
-            raw = await self.completion_fn(
-                messages=[{"role": "user", "content": prompt}],
-                model=model,
-                llm_provider=provider,
-                max_tokens=1800,
-                temperature=0.2,
-            )
-        except TypeError:
-            raw = await self.completion_fn(prompt)
-        except Exception as exc:
-            logger.warning("Market analyst LLM call failed; using derived analysis: %s", exc)
-            return None
-
-        from ..parsing import load_repaired_json
-        parsed = load_repaired_json(str(raw))
         if isinstance(parsed, dict):
             return self._normalize_analysis(parsed)
         return None

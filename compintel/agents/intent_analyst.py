@@ -133,10 +133,6 @@ class IntentAnalystAgent(BaseCompIntelAgent):
         if not settings.openai_api_key:
             return None
 
-        # Backward-compat: test-injected completion_fn takes priority
-        if hasattr(self, 'completion_fn') and self.completion_fn is not None:
-            return await self._legacy_llm_parse(query, settings)
-
         prompt = load_prompt("intent_analyst")
         parsed = await self.llm.call_and_parse(
             prompt.format(query=query),
@@ -166,84 +162,6 @@ class IntentAnalystAgent(BaseCompIntelAgent):
         parsed["competitors"] = valid_competitors
         return parsed
 
-    async def _legacy_llm_parse(self, query: str, settings: CompIntelSettings) -> dict[str, Any] | None:
-        """Backward-compat path when a test-injected *completion_fn* is present."""
-        try:
-            from ..llm import create_chat_completion, _split_provider_model
-        except Exception:
-            logger.exception("Failed to import create_chat_completion")
-            return None
-
-        provider, model = _split_provider_model(settings.fast_llm)
-
-        prompt = (
-            "You are CompIntel's intent analyst. "
-            "Extract the user's research intent from the query below.\n\n"
-            "CRITICAL RULES:\n"
-            "- 'target' is the primary company being analysed (ONE name).\n"
-            "- 'competitors' are OTHER companies to compare against — NOT "
-            "dimension labels like 'pricing', 'market', 'technology', or 'product'. "
-            "These dimension keywords describe what ASPECTS to analyse, they are "
-            "NEVER competitor names. Skip them entirely.\n"
-            "- P2-1: If the user only named 0-1 competitors, proactively suggest 2-4 "
-            "additional major players in the SAME market segment so the analysis "
-            "covers a meaningful competitive landscape.  Add a note explaining each "
-            "addition rationale.\n"
-            "- 'market_segment' is the industry or market category, inferred from "
-            "the query context (e.g. 'collaboration software', 'electric vehicles').\n"
-            "- 'research_questions' are 3-5 questions the analysis should answer.\n\n"
-            "Return strict JSON only:\n"
-            '{"target": "...", "market_segment": "...", '
-            '"competitors": [{"name": "...", "website": null, "rationale": "..."}], '
-            '"research_questions": ["..."], "notes": ["..."]}\n\n'
-            f"Query: {query}\n"
-        )
-
-        last_error: Exception | None = None
-        max_attempts = 3
-        for attempt in range(1, max_attempts + 1):
-            try:
-                raw = await self.completion_fn(
-                    messages=[{"role": "user", "content": prompt}],
-                    model=model,
-                    llm_provider=provider,
-                    max_tokens=1000,
-                    temperature=0.2,
-                    timeout=45.0,
-                )
-            except Exception as exc:
-                last_error = exc
-                logger.warning("Intent LLM call failed (attempt %d/%d): %s", attempt, max_attempts, exc)
-                if attempt < max_attempts:
-                    await asyncio.sleep(min(2 ** (attempt - 1), 4))
-                continue
-
-            parsed = load_repaired_json(str(raw))
-            if not isinstance(parsed, dict):
-                logger.warning("Intent LLM returned unparseable JSON (attempt %d/%d)", attempt, max_attempts)
-                if attempt < max_attempts:
-                    await asyncio.sleep(1)
-                continue
-
-            competitors = parsed.get("competitors", [])
-            valid_competitors = [
-                c for c in competitors
-                if isinstance(c, dict) and _is_plausible_competitor(c.get("name", ""))
-            ]
-            rejected = len(competitors) - len(valid_competitors)
-            if rejected:
-                logger.info(
-                    "Intent validator rejected %d non-company name(s): %s",
-                    rejected,
-                    [c.get("name") for c in competitors if isinstance(c, dict) and not _is_plausible_competitor(c.get("name", ""))],
-                )
-            parsed["competitors"] = valid_competitors
-            return parsed
-
-        logger.error(
-            "Intent LLM parsing failed after %d attempts (last error: %s)",
-            max_attempts, last_error,
-        )
         return None
 
     def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:

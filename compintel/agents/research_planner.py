@@ -15,9 +15,8 @@ from .base import BaseCompIntelAgent
 class ResearchPlannerAgent(BaseCompIntelAgent):
     """Create a structured plan for each competitor."""
 
-    def __init__(self, model: str = "deepseek-chat", completion_fn: Any | None = None) -> None:
+    def __init__(self, model: str = "deepseek-chat") -> None:
         super().__init__(model=model, model_key="fast")
-        self.completion_fn = completion_fn
 
     async def __call__(self, state: Any) -> dict[str, Any]:
         s = self.read_state(state)
@@ -48,9 +47,6 @@ class ResearchPlannerAgent(BaseCompIntelAgent):
         questions: list[str],
         market_segment: str,
     ) -> dict[str, Any] | None:
-        if self.completion_fn is not None:
-            return await self._legacy_llm_plan(competitors, questions, market_segment)
-
         prompt = load_prompt("research_planner")
         result = await self.llm.call_and_parse(
             prompt.format(
@@ -65,54 +61,6 @@ class ResearchPlannerAgent(BaseCompIntelAgent):
         if isinstance(result, dict):
             return result
         logger.warning("Research planner LLM call failed; using template plan")
-        return None
-
-    async def _legacy_llm_plan(
-        self,
-        competitors: list[dict[str, Any]],
-        questions: list[str],
-        market_segment: str,
-    ) -> dict[str, Any] | None:
-        """Backward-compat path when a test-injected *completion_fn* is present."""
-        try:
-            from ..llm import create_chat_completion, _split_provider_model
-            from ..settings import CompIntelSettings
-        except Exception:
-            logger.exception("Failed to import legacy LLM deps")
-            return None
-
-        settings = CompIntelSettings.from_env()
-        if not settings.llm_api_key:
-            return None
-
-        provider, model = _split_provider_model(settings.fast_llm)
-        prompt = (
-            "You are CompIntel's research planner.\n"
-            "Create a JSON object keyed by competitor name. Each competitor must include phases "
-            "with focused search queries and a search_strategy.\n"
-            "Return strict JSON only.\n"
-            f"Market segment: {market_segment}\n"
-            f"Competitors: {safe_json_dumps(competitors)}\n"
-            f"Research questions: {safe_json_dumps(questions)}\n"
-        )
-        try:
-            raw = await self.completion_fn(
-                messages=[{"role": "user", "content": prompt}],
-                model=model,
-                llm_provider=provider,
-                max_tokens=1600,
-                temperature=0.2,
-            )
-        except TypeError:
-            raw = await self.completion_fn(prompt)
-        except Exception as exc:
-            logger.warning("Research planner LLM call failed; using template plan: %s", exc)
-            return None
-
-        from ..parsing import load_repaired_json
-        parsed = load_repaired_json(str(raw))
-        if isinstance(parsed, dict):
-            return parsed
         return None
 
     def _template_plan(self, competitors: list[dict[str, Any]]) -> dict[str, Any]:

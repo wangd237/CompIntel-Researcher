@@ -51,9 +51,8 @@ _FALLBACK_CONCLUSION = {
 
 
 class ReportWriterAgent(BaseCompIntelAgent):
-    def __init__(self, model: str = "deepseek-chat", completion_fn: Any | None = None) -> None:
+    def __init__(self, model: str = "deepseek-chat") -> None:
         super().__init__(model=model, model_key="smart")
-        self.completion_fn = completion_fn
 
     async def __call__(self, state: Any) -> dict[str, Any]:
         s = self.read_state(state)
@@ -109,25 +108,21 @@ class ReportWriterAgent(BaseCompIntelAgent):
         output window.  A single section failure only degrades that section —
         the rest of the report retains LLM quality.
         """
-        if not settings.llm_api_key and self.completion_fn is None:
+        if not settings.llm_api_key:
             return None
 
-        completion_fn = self.completion_fn
-        provider, model = None, None
-        if completion_fn is None:
-            # Resolve via LLMService — build an adapter that matches
-            # create_chat_completion's signature for section generators.
-            from ..llm import _split_provider_model
-            provider, model = _split_provider_model(settings.smart_llm)
-            async def _llm_call(**kwargs: Any) -> str:
-                prompt = str(kwargs.get("messages", [{}])[0].get("content", ""))
-                return await self.llm.call(
-                    prompt,
-                    model_key="smart",
-                    max_tokens=int(kwargs.get("max_tokens", 500)),
-                    temperature=float(kwargs.get("temperature", 0.3)),
-                )
-            completion_fn = _llm_call
+        # Resolve via LLMService — build an adapter for section generators.
+        from ..llm import _split_provider_model
+        provider, model = _split_provider_model(settings.smart_llm)
+        async def _llm_call(**kwargs: Any) -> str:
+            prompt = str(kwargs.get("messages", [{}])[0].get("content", ""))
+            return await self.llm.call(
+                prompt,
+                model_key="smart",
+                max_tokens=int(kwargs.get("max_tokens", 500)),
+                temperature=float(kwargs.get("temperature", 0.3)),
+            )
+        completion_fn = _llm_call
         sources = self._extract_sources(profiles)
         lang_instruction = _LANG_INSTRUCTION.get(language, _LANG_INSTRUCTION["en"])
         target = intent.get("target", query)
