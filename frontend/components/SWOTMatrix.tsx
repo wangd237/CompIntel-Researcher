@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { CompetitorSwot, SwotItem } from "@/lib/types";
 
 const quadrants: Array<{ key: keyof CompetitorSwot; label: string; color: string }> = [
@@ -10,14 +11,43 @@ const quadrants: Array<{ key: keyof CompetitorSwot; label: string; color: string
 ];
 
 function SwotList({ items }: { items?: SwotItem[] }) {
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+
   if (!items?.length) {
     return <div className="text-xs italic text-slate-400">No data</div>;
   }
+
   return (
-    <ul className="list-disc pl-4 space-y-1">
-      {items.map((item, index) => (
-        <li key={index} className="text-sm text-slate-700">{item.text}</li>
-      ))}
+    <ul className="space-y-1.5">
+      {items.map((item, index) => {
+        const hasEvidence = item.evidence && item.evidence.trim().length > 0;
+        const isExpanded = expanded[index] ?? false;
+        return (
+          <li key={index}>
+            <div className="text-sm text-slate-700">{item.text}</div>
+            {hasEvidence && (
+              <>
+                <div className="mt-0.5 text-xs text-slate-400 truncate max-w-full">
+                  {isExpanded ? (
+                    <span>{item.evidence}</span>
+                  ) : (
+                    <span>{item.evidence!.slice(0, 80)}{item.evidence!.length > 80 ? "…" : ""}</span>
+                  )}
+                </div>
+                {item.evidence!.length > 80 && (
+                  <button
+                    type="button"
+                    className="mt-0.5 text-xs text-blue-600 hover:text-blue-800"
+                    onClick={() => setExpanded((prev) => ({ ...prev, [index]: !prev[index] }))}
+                  >
+                    {isExpanded ? "Show less" : "Show evidence"}
+                  </button>
+                )}
+              </>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
