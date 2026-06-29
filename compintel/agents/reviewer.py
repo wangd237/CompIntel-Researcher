@@ -57,12 +57,20 @@ class ReviewerAgent(BaseCompIntelAgent):
             return await self._legacy_llm_review(report, retry_count)
 
         prompt = load_prompt("reviewer")
-        parsed = await self.llm.call_with_reasoning(
+        # Reviewer is a scoring task, not a reasoning-intensive task.
+        # call_and_parse with JSON mode is sufficient — the model doesn't
+        # need chain-of-thought to count template hits or score dimensions.
+        # This saves 2 extra LLM calls (reasoning + formatting) vs the old
+        # call_with_reasoning path.
+        parsed = await self.llm.call_and_parse(
             prompt.format(
                 retry_count=retry_count,
                 report=safe_json_dumps(report),
             ),
-            reasoning_max_tokens=3200, formatting_max_tokens=1200, temperature=prompt.temperature,
+            model_key="smart",
+            max_tokens=1200,
+            temperature=prompt.temperature,
+            max_attempts=3,
         )
         if isinstance(parsed, dict):
             return self._normalize_review(parsed, retry_count)

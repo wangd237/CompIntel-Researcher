@@ -267,7 +267,7 @@ class ReportWriterAgent(BaseCompIntelAgent):
         """Generate a short narrative for each competitor — with concurrency control."""
         # Limit concurrent LLM calls to avoid overwhelming the API provider.
         # DeepSeek free tier typically allows 2-5 concurrent connections.
-        _sem = asyncio.Semaphore(3)
+        _sem = asyncio.Semaphore(5)
 
         async def _narrative_for(profile: dict[str, Any]) -> dict[str, Any]:
             async with _sem:
@@ -614,12 +614,12 @@ class ReportWriterAgent(BaseCompIntelAgent):
             return clean
         source_start = clean.rfind("[Source:")
         if source_start == -1:
-            return self._truncate_at_boundary(clean, limit)
+            return ReportWriterAgent._truncate_at_boundary(clean, limit)
         source = clean[source_start:].strip()
         room = max(0, limit - len(source) - 1)
         if room <= 0:
             return source[:limit]
-        body = self._truncate_at_boundary(clean[:room], room)
+        body = ReportWriterAgent._truncate_at_boundary(clean[:room], room)
         return f"{body.rstrip()} {source}"
 
     @staticmethod

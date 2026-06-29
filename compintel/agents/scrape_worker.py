@@ -64,10 +64,11 @@ _INDUSTRY_SCRAPE_SOURCES: dict[str, list[str]] = {
     "investment": [
         "https://crunchbase.com/organization/{query}",
     ],
-    # General fallback — search engine
+    # General fallback — Google search (G2/Capterra are SaaS-only and return
+    # 403 for non-Latin queries in non-SaaS segments.  We use a direct search
+    # engine fallback that works for any industry.)
     "_default": [
-        "https://www.g2.com/search?query={query}",
-        "https://www.capterra.com/search/?query={query}",
+        "https://www.google.com/search?q={query}",
     ],
 }
 
@@ -86,7 +87,12 @@ def _resolve_industry_sources(market_segment: str) -> list[str]:
 
 class BeautifulSoupScraper:
     def scrape(self, url: str, user_agent: str, timeout: float = 20) -> dict[str, Any]:
-        request = Request(url, headers={"User-Agent": user_agent})
+        req_headers = {
+            "User-Agent": user_agent,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
+        request = Request(url, headers=req_headers)
         with urlopen(request, timeout=timeout) as response:
             raw = response.read()
             # Let BeautifulSoup detect encoding from <meta charset> /

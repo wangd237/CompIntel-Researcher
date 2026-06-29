@@ -8,7 +8,7 @@ import { PipelineProgress } from "@/components/PipelineProgress";
 import { ReportViewer } from "@/components/ReportViewer";
 import { SWOTMatrix } from "@/components/SWOTMatrix";
 import { buildQuery, runCompIntelAnalysis } from "@/lib/compintel";
-import { extractReport, toMarkdown } from "@/lib/markdown";
+import { extractReport } from "@/lib/markdown";
 import type {
   AnalysisDepth,
   AnalysisDimension,
@@ -34,9 +34,18 @@ export default function HomePage() {
   const [error, setError] = useState("");
   const socketRef = useRef<WebSocket | null>(null);
 
-  const markdown = useMemo(() => toMarkdown(result), [result]);
   const swot = extractReport(result)?.swot_analysis ?? result?.report?.swot_analysis;
   const query = useMemo(() => buildQuery(competitors, dimensions, depth), [competitors, depth, dimensions]);
+
+  // Derive the downloadable report URL from the bundle directory name.
+  // reportPath = "outputs/compintel_bundle_20260627_xxx/report.md"
+  // bundleId = "compintel_bundle_20260627_xxx"
+  const reportUrl = useMemo(() => {
+    if (!reportPath) return undefined;
+    const parts = reportPath.replace(/\\/g, "/").split("/");
+    const bundleId = parts.length >= 2 ? parts[parts.length - 2] : "";
+    return bundleId ? `/api/report/${bundleId}/report.md` : undefined;
+  }, [reportPath]);
 
   function handleSubmit() {
     socketRef.current?.close();
@@ -83,7 +92,7 @@ export default function HomePage() {
         onSubmit={handleSubmit}
       />
 
-      <div className="mx-auto grid max-w-7xl grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)]">
+      <div className="mx-auto grid max-w-6xl grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)]">
         <PipelineProgress events={events} isRunning={isRunning} />
 
         <section className="min-w-0 px-6 py-5">
@@ -113,7 +122,7 @@ export default function HomePage() {
               <ComparisonTable profiles={result?.profiles ?? []} />
             </Panel>
             <Panel title="研究报告">
-              <ReportViewer markdown={markdown} />
+              <ReportViewer reportUrl={reportUrl} />
             </Panel>
           </div>
         </section>

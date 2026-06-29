@@ -82,6 +82,10 @@ class SentenceTransformerEmbedder:
             raise RuntimeError("sentence-transformers is not installed") from exc
         self._model = SentenceTransformer(self.model_name, device=self.device)
 
+    def preload(self) -> None:
+        """Download and load the model synchronously (for startup pre-warming)."""
+        self._ensure_model()
+
 
 _CJK_RE = re.compile(r"[一-鿿]")
 _ASCII_TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -263,6 +267,11 @@ class QdrantStore:
             except Exception:
                 logger.warning("Qdrant disk path %s locked, falling back to :memory:", path)
         return cls(collection_name=collection_name)
+
+    def preload_embedder(self) -> None:
+        """Pre-warm the embedder so the first query doesn't block on model download."""
+        if hasattr(self.embedder, 'preload'):
+            self.embedder.preload()
 
     def ensure_collection(self) -> None:
         assert self.client is not None

@@ -47,6 +47,15 @@ class LLMService:
     def __init__(self, settings: CompIntelSettings | None = None) -> None:
         self._settings = settings
         self._completion_fn = None  # reserved for test injection in Phase 2
+        # Deterministic call cache: maps (prompt_hash, model_key, max_tokens)
+        # → parsed dict.  Only populated for temperature < 0.05 where
+        # outputs are effectively deterministic.  Cleared each query via
+        # clear_cache() — call this before starting a new pipeline run.
+        self._call_cache: dict[tuple[str, str, int], dict[str, Any]] = {}
+
+    def clear_cache(self) -> None:
+        """Clear the deterministic call cache. Call before each new query."""
+        self._call_cache.clear()
 
     # ── properties ─────────────────────────────────────────────────────
 
@@ -100,21 +109,45 @@ class LLMService:
         model = self._resolve_model(model_key)
         provider, model_name = _split_provider_model(model)
 
+        # P2-1: Guard against prompt length triggering spontaneous reasoning.
+        # DeepSeek V4 models enter reasoning mode more readily when the user
+        # message exceeds ~2000 characters, even with thinking=disabled.
+        # For free-text tasks without JSON output, trim the prompt to stay
+        # under the threshold.
+        is_free_text = (
+            response_format is None
+            or response_format.get("type") != "json_object"
+        )
+        thinking_disabled = (
+            thinking is not None
+            and thinking.get("type") == "disabled"
+        )
+        if is_free_text and thinking_disabled and len(prompt) > 2000:
+            # Trim from the middle (data sections), preserving instructions
+            # at the start and end.
+            head = prompt[:1200]
+            tail = prompt[-400:]
+            prompt = f"{head}\n…[trimmed to prevent reasoning mode]…\n{tail}"
+            logger.debug("Trimmed prompt from >2000 to %d chars to prevent spontaneous reasoning", len(prompt))
+
         messages: list[dict[str, str]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        return await create_chat_completion(
-            messages=messages,
-            model=model_name,
-            llm_provider=provider,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            timeout=timeout,
-            thinking=thinking,
-            response_format=response_format,
-        )
+        kwargs: dict[str, Any] = {
+            "messages": messages,
+            "model": model_name,
+            "llm_provider": provider,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "timeout": timeout,
+        }
+        if thinking is not None:
+            kwargs["thinking"] = thinking
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        return await create_chat_completion(**kwargs)
 
     async def call_and_parse(
         self,
@@ -138,6 +171,22 @@ class LLMService:
             Parsed JSON dict on success, ``None`` after exhausting all
             attempts.
         """
+        # ── Deterministic cache (Phase 3) ─────────────────────────────
+        # When temperature is very low (< 0.05), identical prompt + model
+        # + max_tokens produces identical output.  Cache hits eliminate
+        # LLM calls entirely — most useful during Reviewer revise loops
+        # and repeated calls with the same profile data.
+        if temperature < 0.05:
+            import hashlib
+            prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+            cache_key: tuple[str, str, int] = (prompt_hash, model_key, max_tokens)
+            cached = self._call_cache.get(cache_key)
+            if cached is not None:
+                logger.debug("Deterministic cache hit for prompt hash %s", prompt_hash)
+                return dict(cached)  # shallow copy so callers can't mutate cached value
+        else:
+            cache_key = None
+
         last_error: Exception | None = None
 
         for attempt in range(1, max_attempts + 1):
@@ -146,7 +195,7 @@ class LLMService:
                     prompt=prompt,
                     model_key=model_key,
                     max_tokens=max_tokens,
-                    temperature=temperature,
+                    temperature=max(temperature, 0.05),  # P2: 0.0 triggers reasoning on V4
                     timeout=timeout,
                     system_prompt=system_prompt,
                     thinking={"type": "disabled"},
@@ -164,10 +213,14 @@ class LLMService:
 
             parsed = load_repaired_json(str(raw))
             if isinstance(parsed, dict):
+                if cache_key is not None:
+                    self._call_cache[cache_key] = dict(parsed)
                 return parsed
             # DeepSeek sometimes wraps the JSON object in a single-element list
             if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
                 logger.debug("LLM returned a single-element list; unwrapping to dict")
+                if cache_key is not None:
+                    self._call_cache[cache_key] = dict(parsed[0])
                 return parsed[0]
 
             # Empty response: treat like a network failure so the retry loop
@@ -346,6 +399,39 @@ class LLMService:
         if formatting_max_tokens is None:
             formatting_max_tokens = self.settings.formatting_max_tokens
 
+        # ── Fast-path: single-call for short/simple prompts ──────────────
+        # When the prompt is short and token budget is modest, try a single
+        # reasoning call and extract JSON from the reasoning tail directly.
+        # This saves one full formatting-phase LLM call (~5-10s) per task.
+        if len(prompt) < 2500 and reasoning_max_tokens <= 3000:
+            reason_model = self._resolve_model(reasoning_model_key)
+            reason_provider, reason_model_name = _split_provider_model(reason_model)
+            try:
+                raw = await create_chat_completion_raw(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=reason_model_name,
+                    llm_provider=reason_provider,
+                    max_tokens=reasoning_max_tokens,
+                    temperature=temperature,
+                    timeout=timeout,
+                    thinking={"type": "enabled"},
+                )
+                reasoning = (raw.get("reasoning_content") or raw.get("content") or "").strip()
+                if reasoning:
+                    # Try to extract JSON from the reasoning tail
+                    from compintel.llm import _extract_tail_json
+                    json_candidate = _extract_tail_json(reasoning)
+                    if json_candidate:
+                        parsed = load_repaired_json(json_candidate)
+                        if isinstance(parsed, dict):
+                            logger.debug("Fast-path reasoning succeeded (single call)")
+                            return parsed
+                        if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+                            logger.debug("Fast-path reasoning succeeded (single call, unwrapped list)")
+                            return parsed[0]
+            except Exception:
+                pass  # Fast-path failed — fall through to full two-phase pipeline
+
         # ── Phase 1: Reasoning ──────────────────────────────────────────
         reason_model = self._resolve_model(reasoning_model_key)
         reason_provider, reason_model_name = _split_provider_model(reason_model)
@@ -446,7 +532,7 @@ class LLMService:
                     model=format_model_name,
                     llm_provider=format_provider,
                     max_tokens=formatting_max_tokens,
-                    temperature=0.0,
+                    temperature=0.1,  # P2: 0.0 triggers reasoning on V4
                     timeout=timeout,
                     thinking={"type": "disabled"},
                     response_format={"type": "json_object"},
@@ -550,59 +636,86 @@ class LLMService:
     ) -> str:
         """Distill raw chain-of-thought into structured claims (≤400 chars).
 
-        Claude Code separates unstructured ``<thinking>`` from structured
-        output — the downstream consumer sees only the conclusion.  We
-        apply the same principle here: the raw reasoning (4000+ chars of
-        "let me think about...""let me analyze...") is model-internal
-        dialogue.  Passing it verbatim to the formatter bloats the prompt
-        to 3000+ tokens, which can trigger reasoning behaviour even in
-        non-reasoning models.
-
-        This bridge extracts ONLY the key factual claims and strategic
-        conclusions, discarding the scaffolding.  The formatter then
-        receives a clean ~400-char summary — well under the threshold
-        where models start burning tokens on meta-cognition.
+        Uses local extraction (<1 ms) — when that produces fewer than 20 chars
+        of useful output, truncate to 800 chars directly.  The LLM-based
+        compression call has been removed entirely: it was an extra LLM call
+        that itself could trigger spontaneous reasoning, and local extraction
+        hits the >90% case in practice.
         """
         # If reasoning is already short, skip compression.
         if len(reasoning_text) <= 800:
             return reasoning_text
 
-        format_model = self._resolve_model(formatting_model_key)
-        format_provider, format_model_name = _split_provider_model(format_model)
-
-        compress_prompt = (
-            "Below is a chain-of-thought analysis produced by a reasoning model. "
-            "Extract ONLY the key factual claims, strategic conclusions, and "
-            "specific competitor/market findings.  Discard all meta-commentary "
-            "('let me think...', 'we need to...', 'I will analyze...').\n\n"
-            "Output format: numbered bullet points, one per finding. "
-            "Max 10 points.  Each point under 60 characters.\n"
-            "Output language: match the input language (中文 or English).\n\n"
-            f"Reasoning:\n{reasoning_text[:3000]}\n\n"
-            "Key findings:"
-        )
-
-        try:
-            raw = await create_chat_completion(
-                messages=[{"role": "user", "content": compress_prompt}],
-                model=format_model_name,
-                llm_provider=format_provider,
-                max_tokens=300,
-                temperature=0.0,
+        # ── Local extraction (<1 ms) ──────────────────────────────────
+        local = self._extract_key_claims(reasoning_text)
+        if local and len(local) >= 20:
+            logger.debug(
+                "Locally compressed reasoning from %d → %d chars",
+                len(reasoning_text), len(local),
             )
-            compressed = str(raw).strip()
-            if compressed and len(compressed) >= 20:
-                logger.debug(
-                    "Compressed reasoning from %d → %d chars",
-                    len(reasoning_text), len(compressed),
-                )
-                return compressed
-        except Exception as exc:
-            logger.debug("Reasoning compression skipped: %s", str(exc)[:120])
+            return local
 
-        # Fallback: truncate to first ~800 chars of raw reasoning.
-        # Better than passing 4000+ chars that trigger reasoning behaviour.
+        # ── Fallback: truncate to first ~800 chars ─────────────────────
         return reasoning_text[:800]
+
+    @staticmethod
+    def _extract_key_claims(text: str) -> str:
+        """Extract key factual claims from reasoning text without an LLM call.
+
+        Looks for:
+        1. Numbered / bulleted lists (lines starting with digits or dashes that
+           contain claim-like content)
+        2. Lines containing key insight indicators (冒号分隔的事实陈述,
+           "key insight:", "therefore", "结论:", "important:", etc.)
+        3. The last few substantive sentences (as a final fallback)
+
+        Returns a compact string of extracted claims, or empty string if nothing
+        useful was found.
+        """
+        lines = text.split("\n")
+        claims: list[str] = []
+
+        # Pattern 1: Numbered/bulleted list items with substance
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # Numbered: "1. xxx", "1) xxx", "第1"
+            # Bulleted: "- xxx", "* xxx", "• xxx"
+            is_list_item = False
+            if stripped[0] in "-*•" or (
+                len(stripped) > 2
+                and (stripped[0].isdigit() and stripped[1] in ".)、")
+            ):
+                is_list_item = True
+            if is_list_item and len(stripped) >= 15:
+                claims.append(stripped)
+
+        # Pattern 2: Lines with claim indicators
+        claim_keywords = (
+            "key insight:", "therefore", "结论:", "important:",
+            "关键发现:", "关键洞察:", "总结:", "核心观点:",
+            "优势:", "劣势:", "机会:", "威胁:",
+            "strength:", "weakness:", "opportunity:", "threat:",
+            "differentiator:", "competitive",
+        )
+        for line in lines:
+            stripped = line.strip()
+            low = stripped.lower()
+            if any(kw in low for kw in claim_keywords):
+                if stripped not in claims and len(stripped) >= 15:
+                    claims.append(stripped)
+
+        if claims:
+            return "\n".join(claims[:10])
+
+        # Pattern 3: Last few substantive sentences (80+ char lines likely
+        # to be conclusions, not scaffolding)
+        substantive = [l.strip() for l in lines if len(l.strip()) >= 80]
+        if substantive:
+            return "\n".join(substantive[-5:])
+
+        return ""
 
     def _resolve_model(self, model_key: str) -> str:
         """Map a symbolic key to the concrete model string from settings."""

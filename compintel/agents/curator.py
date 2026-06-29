@@ -210,10 +210,22 @@ class CuratorAgent(BaseCompIntelAgent):
         search = evidence["search"]
         scrape = evidence["scrape"]
         rag = evidence["rag"]
-        # Rich: at least two channels with substantial data
-        if total >= 4 and (search >= 2 or scrape >= 2 or rag >= 1):
+
+        # Count how many independent channels have real data.
+        channels_with_data = 0
+        if search >= 2:
+            channels_with_data += 1
+        if scrape >= 1:
+            channels_with_data += 1
+        if rag >= 1:
+            channels_with_data += 1
+
+        # Rich: at least two independent channels with substantial data.
+        # Search-only is NEVER "rich" — scrape and RAG are needed for W/T evidence.
+        if channels_with_data >= 2 and total >= 4:
             return "rich"
-        if total >= 2:
+        # Adequate: one channel with solid data (usually search) OR two thin channels.
+        if total >= 2 or channels_with_data >= 2:
             return "adequate"
         if total >= 1:
             return "thin"
@@ -226,11 +238,12 @@ class CuratorAgent(BaseCompIntelAgent):
             grade_counts[g["grade"]] = grade_counts.get(g["grade"], 0) + 1
 
         total = len(grades)
-        rich_pct = grade_counts["rich"] / max(total, 1) * 100
-
-        if rich_pct >= 60:
+        # "good" requires at least one rich profile AND no empty profiles.
+        # A pipeline where every profile is "adequate" but search-only is
+        # NOT good — W/T evidence is missing across the board.
+        if grade_counts["rich"] >= 1 and grade_counts["empty"] == 0:
             overall = "good"
-        elif rich_pct >= 30:
+        elif grade_counts["rich"] >= 1 or grade_counts["adequate"] >= total // 2 + 1:
             overall = "mixed"
         else:
             overall = "weak"

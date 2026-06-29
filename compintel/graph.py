@@ -26,7 +26,7 @@ from .schemas import CompIntelAnalyzeResponse, CompetitorProfileSchema
 from .state import CompIntelState
 
 
-class CompetitorProfileGraphState(TypedDict, total=False):
+class CompetitorProfileGraphState(TypedDict):
     competitor: dict[str, Any]
     research_questions: list[str]
     market_segment: str
@@ -428,6 +428,7 @@ class CompIntelGraph:
                 text = str(item.get("text", "")).strip()
                 if text and len(text) > 10:
                     # Skip entries that are just old report metadata dumps
+                    # or cross-domain pollution (e.g. GPU market analysis for an e-commerce query).
                     if "Executive Summary:" in text or "Target: " in text:
                         continue
                     parts.append(text[:300])

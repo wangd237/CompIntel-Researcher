@@ -26,6 +26,7 @@ export type CompetitorProfile = {
   name: string;
   website?: string | null;
   summary?: string | null;
+  evidence_grade?: string;
   sources?: string[];
   search_results?: Array<{ url?: string; title?: string; snippet?: string; source?: string }>;
   rag_context?: Array<{ source?: string; text?: string }>;

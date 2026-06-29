@@ -26,7 +26,7 @@ class CompIntelSettings:
     formatting_llm: str = "openai:deepseek-v4-flash"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
-    llm_timeout_seconds: float = 90.0
+    llm_timeout_seconds: float = 45.0
     reasoning_max_tokens: int = 4000
     formatting_max_tokens: int = 2000
     embedding_model: str = ""
@@ -62,7 +62,7 @@ class CompIntelSettings:
                 _setting(values, "LLM_API_KEY", "")
                 or _setting(values, "OPENAI_API_KEY", "")
             ),
-            llm_timeout_seconds=_float_setting(values, "LLM_TIMEOUT_SECONDS", 90.0),
+            llm_timeout_seconds=_float_setting(values, "LLM_TIMEOUT_SECONDS", 45.0),
             reasoning_max_tokens=int(_setting(values, "REASONING_MAX_TOKENS", "4000")),
             formatting_max_tokens=int(_setting(values, "FORMATTING_MAX_TOKENS", "2000")),
             embedding_model=_setting(values, "EMBEDDING_MODEL", "").strip(),

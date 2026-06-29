@@ -32,13 +32,11 @@ export function ComparisonTable({ profiles }: { profiles: CompetitorProfile[] })
                 竞品 <ArrowDownUp className="h-3 w-3" />
               </button>
             </th>
-            <th className="px-3 py-2">产品</th>
-            <th className="px-3 py-2">定价</th>
-            <th className="px-3 py-2">市场</th>
-            <th className="px-3 py-2">技术</th>
+            <th className="px-3 py-2">摘要</th>
+            <th className="px-3 py-2">证据等级</th>
             <th className="px-3 py-2 text-right">
               <button className="inline-flex items-center gap-1 font-semibold" onClick={() => setSortKey("sources")}>
-                来源 <ArrowDownUp className="h-3 w-3" />
+                来源数 <ArrowDownUp className="h-3 w-3" />
               </button>
             </th>
           </tr>
@@ -47,10 +45,10 @@ export function ComparisonTable({ profiles }: { profiles: CompetitorProfile[] })
           {rows.map((profile) => (
             <tr key={profile.name} className="border-t border-line">
               <td className="px-3 py-3 font-semibold text-slate-900">{profile.name}</td>
-              <td className="px-3 py-3 text-slate-700">{profile.summary ?? "待补充"}</td>
-              <td className="px-3 py-3 text-slate-500">Data gap</td>
-              <td className="px-3 py-3 text-slate-700">{profile.rag_context?.[0]?.text ?? "待补充"}</td>
-              <td className="px-3 py-3 text-slate-500">Data gap</td>
+              <td className="px-3 py-3 text-slate-700 max-w-xs truncate" title={profile.summary ?? ""}>
+                {profile.summary ?? "待补充"}
+              </td>
+              <td className="px-3 py-3">{evidenceBadge(profile.evidence_grade)}</td>
               <td className="px-3 py-3 text-right text-slate-700">{sourceCount(profile)}</td>
             </tr>
           ))}
@@ -65,5 +63,20 @@ function sourceCount(profile: CompetitorProfile): number {
     (profile.sources?.length ?? 0) +
     (profile.search_results?.length ?? 0) +
     (profile.rag_context?.length ?? 0)
+  );
+}
+
+function evidenceBadge(grade?: string) {
+  const map: Record<string, { label: string; cls: string }> = {
+    rich: { label: "丰富", cls: "bg-emerald-100 text-emerald-800" },
+    adequate: { label: "充足", cls: "bg-blue-100 text-blue-800" },
+    thin: { label: "稀疏", cls: "bg-amber-100 text-amber-800" },
+    empty: { label: "空", cls: "bg-rose-100 text-rose-800" },
+  };
+  const entry = map[grade ?? ""] ?? { label: grade ?? "未知", cls: "bg-slate-100 text-slate-600" };
+  return (
+    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${entry.cls}`}>
+      {entry.label}
+    </span>
   );
 }

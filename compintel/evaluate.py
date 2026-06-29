@@ -109,8 +109,14 @@ def score_source_traceability(result: dict[str, Any]) -> tuple[int, str]:
     evidence_items: list[str] = []
     for comp in competitors:
         for quadrant in ("strengths", "weaknesses", "opportunities", "threats"):
-            for item in comp.get(quadrant, []):
-                ev = (item.get("evidence") or "").strip()
+            items_list = comp.get(quadrant, [])
+            if isinstance(items_list, str):
+                continue
+            for item in items_list:
+                if isinstance(item, dict):
+                    ev = (item.get("evidence") or "").strip()
+                else:
+                    ev = str(item).strip() if item else ""
                 if ev:
                     evidence_items.append(ev)
 
