@@ -190,15 +190,17 @@ async def create_chat_completion_raw(
                 )
                 # Re-create client on connection-level errors so the next
                 # attempt gets a fresh TCP+TLS session.
+                # Order matters: aclose() FIRST (wait for shutdown), then
+                # set _CLIENT = None so the next attempt sees it clean.
                 if isinstance(exc, (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError)):
-                    global _CLIENT
                     try:
-                        old = _CLIENT
-                        _CLIENT = None
-                        if old:
-                            await old.aclose()
+                        async with _CLIENT_LOCK:
+                            old = _CLIENT
+                            if old is not None:
+                                await old.aclose()
+                            _CLIENT = None
                     except Exception:
-                        pass
+                        _CLIENT = None
                 if attempt < max_attempts:
                     # Exponential backoff + random jitter (P1: prevents
                     # synchronised retry storms when multiple calls fail
